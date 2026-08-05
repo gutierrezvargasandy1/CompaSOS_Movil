@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "com.utng.compasos_movil"
     compileSdk {
-        version = release(36) {
+        version = release(37) {
             minorApiLevel = 1
         }
     }
@@ -14,7 +14,7 @@ android {
     defaultConfig {
         applicationId = "com.utng.compasos_movil"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
@@ -53,4 +53,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // Dependencias para la Navegacion
+    implementation("androidx.navigation:navigation-compose:2.9.0")
+
 }
