@@ -20,12 +20,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
 
-class LoginScreen {
-
-
-    @Composable
-    fun LoginScreen(){
+@Composable
+    fun LoginScreen(
+        navController: NavController
+    ){
 
         var email by remember {
             mutableStateOf("")
@@ -92,4 +92,3 @@ class LoginScreen {
         }
 
     }
-}
