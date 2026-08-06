@@ -14,4 +14,9 @@ interface UsuarioDao {
     @Query("SELECT * FROM usuarios")
     suspend fun obtenerTodos(): List<UsuarioEntity>
 
+    @Query("SELECT * FROM usuarios WHERE id = :usuarioId")
+    suspend fun obtenerPorId(usuarioId: String): UsuarioEntity?
+
+    @Query("SELECT * FROM usuarios WHERE correo = :correo")
+    suspend fun obtenerPorCorreo(correo: String): UsuarioEntity?
 }
