@@ -5,6 +5,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.utng.compasos_movil.ui.screens.LoginScreen
+import com.utng.compasos_movil.ui.screens.PerfilMedicoScreen
+import com.utng.compasos_movil.ui.screens.RegistroUsuarioScreen
 
 
 @Composable
@@ -17,6 +19,14 @@ import com.utng.compasos_movil.ui.screens.LoginScreen
 
             composable(Screen.Login.route){
                 LoginScreen(navController)
+            }
+
+            composable(Screen.Registro.route){
+                RegistroUsuarioScreen(navController)
+            }
+
+            composable(Screen.PerfilMedico.route){
+                PerfilMedicoScreen(navController)
             }
 
 

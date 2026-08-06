@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.utng.compasos_movil.navigation.Screen
 
 @Composable
     fun LoginScreen(
@@ -83,6 +84,15 @@ import androidx.navigation.NavController
 
                 Text("Iniciar Sesión")
 
+            }
+            Spacer(modifier = Modifier.height(25.dp))
+
+            Button(
+                onClick = {
+                    navController.navigate(Screen.Registro.route)
+                }
+            ) {
+                Text("Registro")
             }
 
 

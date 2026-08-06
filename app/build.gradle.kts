@@ -65,6 +65,9 @@ dependencies {
     implementation("androidx.room3:room3-runtime:$room_version")
     ksp("androidx.room3:room3-compiler:$room_version")
 
+    // Material 3
+    implementation("androidx.compose.material:material-icons-extended:1.6.8")
+
 
 
 
