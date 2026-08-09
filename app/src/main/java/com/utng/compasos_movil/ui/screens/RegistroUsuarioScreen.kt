@@ -23,6 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.utng.compasos_movil.navigation.Screen
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertBanner
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertToast
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertType
+import com.utng.compasos_movil.ui.screens.molals.rememberCompaSOSAlertState
 import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
@@ -50,11 +54,18 @@ data class RegistroUsuarioState(
 
 private val opcionesSexo = listOf("Masculino", "Femenino", "Otro", "Prefiero no decirlo")
 
+/**
+ * onRegistrar ahora devuelve un resultado (String?) para poder mostrar el
+ * banner de error correspondiente si el registro falla en el backend
+ * (por ejemplo correo ya usado):
+ *   - null        -> registro exitoso
+ *   - "mensaje..." -> registro fallido, se muestra ese mensaje en el toast de error
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegistroUsuarioScreen(
     navController: NavController,
-    onRegistrar: (RegistroUsuarioState) -> Unit = {},
+    onRegistrar: (RegistroUsuarioState) -> String? = { null },
     onSeleccionarFoto: () -> Unit = {}
 ) {
     var state by remember { mutableStateOf(RegistroUsuarioState()) }
@@ -62,6 +73,8 @@ fun RegistroUsuarioScreen(
     var mostrarConfirmarPassword by remember { mutableStateOf(false) }
     var mostrarDatePicker by remember { mutableStateOf(false) }
     var mostrarErrorPasswords by remember { mutableStateOf(false) }
+
+    val aviso = rememberCompaSOSAlertState()
 
     val puedeRegistrar = state.nombre.isNotBlank() &&
             state.correo.isNotBlank() &&
@@ -203,24 +216,28 @@ fun RegistroUsuarioScreen(
                 onTogglePasswordVisibility = { mostrarConfirmarPassword = !mostrarConfirmarPassword }
             )
 
-            if (mostrarErrorPasswords) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Las contraseñas no coinciden",
-                    color = Color(0xFFEF5350),
-                    fontSize = 12.sp
-                )
-            }
+            Spacer(Modifier.height(10.dp))
 
-            Spacer(Modifier.height(24.dp))
+            // Banner fijo: contraseñas que no coinciden (reemplaza el Text suelto anterior).
+            CompaSOSAlertBanner(
+                mensaje = "Las contraseñas no coinciden",
+                tipo = CompaSOSAlertType.Error,
+                visible = mostrarErrorPasswords
+            )
+
+            Spacer(Modifier.height(14.dp))
 
             Button(
                 onClick = {
                     if (state.password != state.confirmarPassword) {
                         mostrarErrorPasswords = true
                     } else {
-                        onRegistrar(state)
-                        navController.navigate(Screen.PerfilMedico.route)
+                        val error = onRegistrar(state)
+                        if (error != null) {
+                            aviso.mostrar(error, CompaSOSAlertType.Error)
+                        } else {
+                            navController.navigate(Screen.PerfilMedico.route)
+                        }
                     }
                 },
                 enabled = puedeRegistrar,
@@ -251,6 +268,16 @@ fun RegistroUsuarioScreen(
                 )
             }
         }
+
+        // Toast flotante: feedback cuando el registro falla en el backend
+        // (ej. correo ya registrado).
+        CompaSOSAlertToast(
+            mensaje = aviso.mensaje,
+            tipo = aviso.tipo,
+            visible = aviso.visible,
+            onFinalizar = aviso::ocultar,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }
 

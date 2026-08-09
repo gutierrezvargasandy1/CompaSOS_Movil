@@ -2,6 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permisos de Internet (necesario para descargar los tiles del mapa) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Permisos de ubicación -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Mapbox guarda su caché en almacenamiento interno de la app, así que
+         WRITE/READ_EXTERNAL_STORAGE ya no hacen falta (eran para osmdroid). -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -11,6 +23,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CompaSOS_Movil">
+
+        <!-- Token público de Mapbox. El valor real vive en un recurso que NO se
+             sube a git — ver res/values/developer-config.xml más abajo. -->
+        <meta-data
+            android:name="MAPBOX_ACCESS_TOKEN"
+            android:value="@string/mapbox_access_token" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
