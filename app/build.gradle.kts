@@ -65,8 +65,26 @@ dependencies {
     implementation("androidx.room3:room3-runtime:$room_version")
     ksp("androidx.room3:room3-compiler:$room_version")
 
-    // Material 3
-    implementation("androidx.compose.material:material-icons-extended:1.6.8")
+    // material 3 iconos
+    implementation("androidx.compose.material:material-icons-extended:1.7.6")
+
+// OSMDroid - OpenStreetMap
+    implementation("org.osmdroid:osmdroid-android:6.1.17")
+// Retrofit para llamadas a API
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+// Gson
+    implementation("com.google.code.gson:gson:2.10.1")
+// Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+// Permisos (Opcional - Simplifica la gestión de permisos)
+    implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+// Hilt (Inyección de dependencias - Opcional)
+    implementation("com.google.dagger:hilt-android:2.48")
+
+    implementation("com.mapbox.extension:maps-compose:11.28.0")
+    implementation("com.mapbox.maps:android:11.28.0")
 
 
 

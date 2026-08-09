@@ -20,6 +20,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.utng.compasos_movil.navigation.Screen
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertBanner
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertToast
+import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertType
+import com.utng.compasos_movil.ui.screens.molals.rememberCompaSOSAlertState
 import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
@@ -42,13 +46,22 @@ data class PerfilMedicoState(
 
 private val tiposSangre = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 
+/**
+ * onGuardar ahora devuelve un resultado (String?) para poder mostrar el
+ * banner de error correspondiente si falla al guardar en el backend:
+ *   - null        -> guardado exitoso
+ *   - "mensaje..." -> guardado fallido, se muestra ese mensaje en el toast de error
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PerfilMedicoScreen(
     navController: NavController,
-    onGuardar: (PerfilMedicoState) -> Unit = {}
+    onGuardar: (PerfilMedicoState) -> String? = { null }
 ) {
     var state by remember { mutableStateOf(PerfilMedicoState()) }
+    var mostrarErrorNumeros by remember { mutableStateOf(false) }
+
+    val aviso = rememberCompaSOSAlertState()
 
     // Todavía no existe una pantalla Home/Dashboard, así que por ahora regresamos
     // a Login limpiando el back stack. Cuando exista Home, cambia Screen.Login
@@ -57,6 +70,12 @@ fun PerfilMedicoScreen(
         navController.navigate(Screen.Login.route) {
             popUpTo(Screen.Login.route) { inclusive = true }
         }
+    }
+
+    fun pesoAlturaValidos(): Boolean {
+        val pesoOk = state.peso.isBlank() || state.peso.toDoubleOrNull() != null
+        val alturaOk = state.altura.isBlank() || state.altura.toDoubleOrNull() != null
+        return pesoOk && alturaOk
     }
 
     Box(
@@ -97,7 +116,10 @@ fun PerfilMedicoScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 PerfilMedicoTextField(
                     value = state.peso,
-                    onValueChange = { state = state.copy(peso = it) },
+                    onValueChange = {
+                        state = state.copy(peso = it)
+                        mostrarErrorNumeros = false
+                    },
                     placeholder = "Peso (kg)",
                     icon = Icons.Filled.MonitorWeight,
                     keyboardType = KeyboardType.Decimal,
@@ -105,14 +127,27 @@ fun PerfilMedicoScreen(
                 )
                 PerfilMedicoTextField(
                     value = state.altura,
-                    onValueChange = { state = state.copy(altura = it) },
+                    onValueChange = {
+                        state = state.copy(altura = it)
+                        mostrarErrorNumeros = false
+                    },
                     placeholder = "Altura (cm)",
                     icon = Icons.Filled.Height,
                     keyboardType = KeyboardType.Decimal,
                     modifier = Modifier.weight(1f)
                 )
             }
-            Spacer(Modifier.height(14.dp))
+
+            Spacer(Modifier.height(10.dp))
+
+            // Banner fijo: peso/altura con formato inválido.
+            CompaSOSAlertBanner(
+                mensaje = "Ingresa peso y altura como números válidos (ej. 68.5)",
+                tipo = CompaSOSAlertType.Advertencia,
+                visible = mostrarErrorNumeros
+            )
+
+            Spacer(Modifier.height(4.dp))
 
             PerfilMedicoTextField(
                 value = state.alergias,
@@ -153,8 +188,17 @@ fun PerfilMedicoScreen(
 
             Button(
                 onClick = {
-                    onGuardar(state)
-                    irAHome()
+                    if (!pesoAlturaValidos()) {
+                        mostrarErrorNumeros = true
+                    } else {
+                        val error = onGuardar(state)
+                        if (error != null) {
+                            aviso.mostrar(error, CompaSOSAlertType.Error)
+                        } else {
+                            aviso.mostrar("Perfil médico guardado", CompaSOSAlertType.Exito)
+                            irAHome()
+                        }
+                    }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -174,6 +218,15 @@ fun PerfilMedicoScreen(
                 modifier = Modifier.clickable(onClick = { irAHome() })
             )
         }
+
+        // Toast flotante: feedback al guardar (éxito o error del backend).
+        CompaSOSAlertToast(
+            mensaje = aviso.mensaje,
+            tipo = aviso.tipo,
+            visible = aviso.visible,
+            onFinalizar = aviso::ocultar,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }
 
