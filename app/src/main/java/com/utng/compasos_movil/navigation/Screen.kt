@@ -11,4 +11,8 @@ sealed class Screen(val route: String) {
     object HistorialUbicaciones : Screen("historial_ubicaciones")
     object Notificaciones : Screen("notificaciones")
     object Configuracion : Screen("configuracion")
+
+    object  Perfil : Screen("perfil")
+
+    object  EditarPerfil : Screen("editar_perfil")
 }

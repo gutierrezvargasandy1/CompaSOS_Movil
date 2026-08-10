@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.text)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -86,6 +87,8 @@ dependencies {
     implementation("com.mapbox.extension:maps-compose:11.28.0")
     implementation("com.mapbox.maps:android:11.28.0")
 
+
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
 
 

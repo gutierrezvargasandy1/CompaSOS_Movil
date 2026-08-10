@@ -21,8 +21,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.utng.compasos_movil.navigation.AppNavigation
+import com.utng.compasos_movil.AuthModule.AuthState
+import com.utng.compasos_movil.AuthModule.AuthViewModel
 import com.utng.compasos_movil.navigation.Screen
 import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertBanner
 import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertToast
@@ -34,29 +36,24 @@ import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
 
 /**
- * onIniciarSesion ahora devuelve un resultado (String?) para poder mostrar el
- * banner de error correspondiente:
- *   - null           -> login exitoso
- *   - "mensaje..."    -> login fallido, se muestra ese mensaje en el toast de error
- *
- * Ejemplo real con tu lógica de autenticación:
- *
- * onIniciarSesion = { email, password ->
- *     if (autenticar(email, password)) null else "Correo o contraseña incorrectos"
- * }
+ * LoginScreen integrado con AuthViewModel
+ * Maneja login, validaciones, estados de carga y errores
  */
 @Composable
 fun LoginScreen(
     navController: NavController,
-    onIniciarSesion: (String, String) -> String? = { _, _ -> null }
+    authViewModel: AuthViewModel = viewModel()
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var mostrarPassword by remember { mutableStateOf(false) }
 
     val aviso = rememberCompaSOSAlertState()
+    val authState by authViewModel.authState.collectAsState()
+    val errorMessage by authViewModel.errorMessage.collectAsState()
 
     val puedeIniciarSesion = email.isNotBlank() && password.isNotBlank()
+    val estaCargando = authState is AuthState.Loading
 
     Box(
         modifier = Modifier
@@ -86,7 +83,8 @@ fun LoginScreen(
                 onValueChange = { email = it },
                 placeholder = "Email",
                 icon = Icons.Filled.Email,
-                keyboardType = KeyboardType.Email
+                keyboardType = KeyboardType.Email,
+                enabled = !estaCargando
             )
             Spacer(Modifier.height(14.dp))
 
@@ -97,12 +95,13 @@ fun LoginScreen(
                 icon = Icons.Filled.Lock,
                 isPassword = true,
                 passwordVisible = mostrarPassword,
-                onTogglePasswordVisibility = { mostrarPassword = !mostrarPassword }
+                onTogglePasswordVisibility = { mostrarPassword = !mostrarPassword },
+                enabled = !estaCargando
             )
 
             Spacer(Modifier.height(16.dp))
 
-            // Banner fijo: solo aparece si faltan datos por llenar.
+            // Banner: advertencia si faltan campos
             CompaSOSAlertBanner(
                 mensaje = "Completa tu correo y contraseña para continuar",
                 tipo = CompaSOSAlertType.Advertencia,
@@ -113,15 +112,12 @@ fun LoginScreen(
 
             Button(
                 onClick = {
-                    val error = onIniciarSesion(email, password)
-                    if (error != null) {
-                        aviso.mostrar(error, CompaSOSAlertType.Error)
-                    } else {
-                        aviso.mostrar("Inicio de sesión exitoso", CompaSOSAlertType.Exito)
-                        navController.navigate(Screen.Dashboard.route)
-                    }
+                    // Limpiar errores previos
+                    authViewModel.clearError()
+                    // Intentar login
+                    authViewModel.login(email, password)
                 },
-                enabled = puedeIniciarSesion,
+                enabled = puedeIniciarSesion && !estaCargando,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
@@ -131,7 +127,15 @@ fun LoginScreen(
                     disabledContainerColor = CompaSOSColors.AccentBlue.copy(alpha = 0.4f)
                 )
             ) {
-                Text("INICIAR SESIÓN", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                if (estaCargando) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = CompaSOSColors.TextPrimary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("INICIAR SESIÓN", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -143,14 +147,17 @@ fun LoginScreen(
                     color = CompaSOSColors.AccentBlue,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
-                    modifier = Modifier.clickable(onClick = {
-                        navController.navigate(Screen.Registro.route)
-                    })
+                    modifier = Modifier.clickable(
+                        enabled = !estaCargando,
+                        onClick = {
+                            navController.navigate(Screen.Registro.route)
+                        }
+                    )
                 )
             }
         }
 
-        // Toast flotante: feedback del intento de inicio de sesión (éxito o error).
+        // Toast flotante: feedback del intento de login
         CompaSOSAlertToast(
             mensaje = aviso.mensaje,
             tipo = aviso.tipo,
@@ -158,6 +165,34 @@ fun LoginScreen(
             onFinalizar = aviso::ocultar,
             modifier = Modifier.align(Alignment.TopCenter)
         )
+    }
+
+    // ============================================================
+    // MANEJO DE ESTADOS DEL LOGIN
+    // ============================================================
+
+    LaunchedEffect(authState) {
+        when (authState) {
+            is AuthState.Success -> {
+                aviso.mostrar("✓ Inicio de sesión exitoso", CompaSOSAlertType.Exito)
+                // Navegar al dashboard después de un breve delay
+                kotlinx.coroutines.delay(1000)
+                navController.navigate(Screen.Dashboard.route) {
+                    popUpTo(Screen.Login.route) { inclusive = true }
+                }
+            }
+
+            is AuthState.Error -> {
+                val mensaje = (authState as AuthState.Error).mensaje
+                aviso.mostrar("✗ $mensaje", CompaSOSAlertType.Error)
+            }
+
+            is AuthState.Loading -> {
+                // No hacer nada, el botón ya muestra el spinner
+            }
+
+            else -> {}
+        }
     }
 }
 
@@ -180,10 +215,7 @@ private fun LogoCompaSOS() {
 }
 
 /**
- * Mismo componente de campo de texto usado en RegistroUsuarioScreen.
- * Si ya tienes CompaSOSTextField definido en un archivo compartido (por ejemplo
- * un archivo de componentes comunes), elimina esta copia de aquí y de
- * RegistroUsuarioScreen.kt para evitar duplicados, y solo importa la versión compartida.
+ * Campo de texto reutilizable para login y registro
  */
 @Composable
 private fun CompaSOSTextField(
@@ -196,6 +228,7 @@ private fun CompaSOSTextField(
     passwordVisible: Boolean = false,
     onTogglePasswordVisibility: (() -> Unit)? = null,
     readOnly: Boolean = false,
+    enabled: Boolean = true,
     onClick: (() -> Unit)? = null
 ) {
     OutlinedTextField(
@@ -220,6 +253,7 @@ private fun CompaSOSTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         singleLine = true,
         readOnly = readOnly,
+        enabled = enabled,
         colors = compaSOSTextFieldColors(),
         shape = RoundedCornerShape(CompaSOSFieldShapeRadius),
         modifier = Modifier

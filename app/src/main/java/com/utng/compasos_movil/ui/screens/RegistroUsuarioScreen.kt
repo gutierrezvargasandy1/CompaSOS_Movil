@@ -1,19 +1,22 @@
 package com.utng.compasos_movil.ui.screens
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -21,7 +24,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.utng.compasos_movil.AuthModule.AuthState
+import com.utng.compasos_movil.AuthModule.AuthViewModel
 import com.utng.compasos_movil.navigation.Screen
 import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertBanner
 import com.utng.compasos_movil.ui.screens.molals.CompaSOSAlertToast
@@ -31,246 +37,240 @@ import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
- * Estado del formulario, alineado 1 a 1 con la tabla `usuarios`.
- * `foto` se guarda como TEXT (por ejemplo, la URL/URI resultante de subir la imagen),
- * aquí solo se maneja la URI local seleccionada mientras no se sube.
+ * RegistroUsuarioScreen integrado con AuthViewModel
+ * Maneja registro, validaciones, estados de carga y errores
  */
-data class RegistroUsuarioState(
-    val nombre: String = "",
-    val apellidoPaterno: String = "",
-    val apellidoMaterno: String = "",
-    val correo: String = "",
-    val password: String = "",
-    val confirmarPassword: String = "",
-    val telefono: String = "",
-    val fotoUri: String? = null,
-    val fechaNacimiento: String = "", // formato yyyy-MM-dd, listo para DATE
-    val sexo: String = ""
-)
-
-private val opcionesSexo = listOf("Masculino", "Femenino", "Otro", "Prefiero no decirlo")
-
-/**
- * onRegistrar ahora devuelve un resultado (String?) para poder mostrar el
- * banner de error correspondiente si el registro falla en el backend
- * (por ejemplo correo ya usado):
- *   - null        -> registro exitoso
- *   - "mensaje..." -> registro fallido, se muestra ese mensaje en el toast de error
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegistroUsuarioScreen(
     navController: NavController,
-    onRegistrar: (RegistroUsuarioState) -> String? = { null },
-    onSeleccionarFoto: () -> Unit = {}
+    authViewModel: AuthViewModel = viewModel()
 ) {
-    var state by remember { mutableStateOf(RegistroUsuarioState()) }
+    var nombre by remember { mutableStateOf("") }
+    var apellidoPaterno by remember { mutableStateOf("") }
+    var apellidoMaterno by remember { mutableStateOf("") }
+    var correo by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var passwordConfirm by remember { mutableStateOf("") }
+    var telefono by remember { mutableStateOf("") }
     var mostrarPassword by remember { mutableStateOf(false) }
-    var mostrarConfirmarPassword by remember { mutableStateOf(false) }
-    var mostrarDatePicker by remember { mutableStateOf(false) }
-    var mostrarErrorPasswords by remember { mutableStateOf(false) }
+    var mostrarPasswordConfirm by remember { mutableStateOf(false) }
 
     val aviso = rememberCompaSOSAlertState()
+    val authState by authViewModel.authState.collectAsState()
+    val errorMessage by authViewModel.errorMessage.collectAsState()
 
-    val puedeRegistrar = state.nombre.isNotBlank() &&
-            state.correo.isNotBlank() &&
-            state.password.isNotBlank() &&
-            state.password == state.confirmarPassword
+    // Validaciones
+    val camposObligatoriosLlenos = nombre.isNotBlank() &&
+            apellidoPaterno.isNotBlank() &&
+            correo.isNotBlank() &&
+            password.isNotBlank() &&
+            passwordConfirm.isNotBlank()
 
-    if (mostrarDatePicker) {
-        val datePickerState = rememberDatePickerState()
-        DatePickerDialog(
-            onDismissRequest = { mostrarDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                        state = state.copy(fechaNacimiento = sdf.format(Date(millis)))
-                    }
-                    mostrarDatePicker = false
-                }) { Text("Aceptar", color = CompaSOSColors.AccentBlue) }
-            },
-            dismissButton = {
-                TextButton(onClick = { mostrarDatePicker = false }) {
-                    Text("Cancelar", color = CompaSOSColors.TextSecondary)
-                }
-            }
-        ) {
-            DatePicker(state = datePickerState)
-        }
-    }
+    val passwordsCoinciden = password == passwordConfirm
+    val passwordValido = password.length >= 6
+    val estaCargando = authState is AuthState.Loading
+    val puedeRegistrar = camposObligatoriosLlenos && passwordsCoinciden && passwordValido && !estaCargando
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(CompaSOSColors.Background)
     ) {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
-                .padding(top = 48.dp, bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            LogoCompaSOS()
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Asistencia cuando más lo necesitas",
-                color = CompaSOSColors.TextSecondary,
-                fontSize = 14.sp
-            )
-
-            Spacer(Modifier.height(24.dp))
-            FotoPerfilPicker(fotoUri = state.fotoUri, onClick = onSeleccionarFoto)
-
-            Spacer(Modifier.height(24.dp))
-
-            CompaSOSTextField(
-                value = state.nombre,
-                onValueChange = { state = state.copy(nombre = it) },
-                placeholder = "Nombre",
-                icon = Icons.Filled.Person
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.apellidoPaterno,
-                onValueChange = { state = state.copy(apellidoPaterno = it) },
-                placeholder = "Apellido paterno",
-                icon = Icons.Filled.Person
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.apellidoMaterno,
-                onValueChange = { state = state.copy(apellidoMaterno = it) },
-                placeholder = "Apellido materno",
-                icon = Icons.Filled.Person
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.correo,
-                onValueChange = { state = state.copy(correo = it) },
-                placeholder = "Email",
-                icon = Icons.Filled.Email,
-                keyboardType = KeyboardType.Email
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.telefono,
-                onValueChange = { state = state.copy(telefono = it) },
-                placeholder = "Teléfono",
-                icon = Icons.Filled.Phone,
-                keyboardType = KeyboardType.Phone
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.fechaNacimiento,
-                onValueChange = {},
-                placeholder = "Fecha de nacimiento",
-                icon = Icons.Filled.CalendarMonth,
-                readOnly = true,
-                onClick = { mostrarDatePicker = true }
-            )
-            Spacer(Modifier.height(14.dp))
-
-            SexoDropdown(
-                sexoSeleccionado = state.sexo,
-                onSexoSeleccionado = { state = state.copy(sexo = it) }
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.password,
-                onValueChange = {
-                    state = state.copy(password = it)
-                    mostrarErrorPasswords = false
-                },
-                placeholder = "Contraseña",
-                icon = Icons.Filled.Lock,
-                isPassword = true,
-                passwordVisible = mostrarPassword,
-                onTogglePasswordVisibility = { mostrarPassword = !mostrarPassword }
-            )
-            Spacer(Modifier.height(14.dp))
-
-            CompaSOSTextField(
-                value = state.confirmarPassword,
-                onValueChange = {
-                    state = state.copy(confirmarPassword = it)
-                    mostrarErrorPasswords = false
-                },
-                placeholder = "Confirmar contraseña",
-                icon = Icons.Filled.Lock,
-                isPassword = true,
-                passwordVisible = mostrarConfirmarPassword,
-                onTogglePasswordVisibility = { mostrarConfirmarPassword = !mostrarConfirmarPassword }
-            )
-
-            Spacer(Modifier.height(10.dp))
-
-            // Banner fijo: contraseñas que no coinciden (reemplaza el Text suelto anterior).
-            CompaSOSAlertBanner(
-                mensaje = "Las contraseñas no coinciden",
-                tipo = CompaSOSAlertType.Error,
-                visible = mostrarErrorPasswords
-            )
-
-            Spacer(Modifier.height(14.dp))
-
-            Button(
-                onClick = {
-                    if (state.password != state.confirmarPassword) {
-                        mostrarErrorPasswords = true
-                    } else {
-                        val error = onRegistrar(state)
-                        if (error != null) {
-                            aviso.mostrar(error, CompaSOSAlertType.Error)
-                        } else {
-                            navController.navigate(Screen.PerfilMedico.route)
-                        }
-                    }
-                },
-                enabled = puedeRegistrar,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CompaSOSColors.AccentBlue,
-                    disabledContainerColor = CompaSOSColors.AccentBlue.copy(alpha = 0.4f)
-                )
-            ) {
-                Text("REGISTRARSE", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            item {
+                Spacer(Modifier.height(16.dp))
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("¿Ya tienes cuenta? ", color = CompaSOSColors.TextSecondary, fontSize = 13.sp)
+            item {
                 Text(
-                    "Inicia sesión",
-                    color = CompaSOSColors.AccentBlue,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.clickable(onClick = {
-                        navController.popBackStack()
-                    })
+                    text = "CompaSOS",
+                    color = CompaSOSColors.TextPrimary,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold
                 )
+                Text(
+                    text = "Crea tu cuenta",
+                    color = CompaSOSColors.TextSecondary,
+                    fontSize = 14.sp
+                )
+            }
+
+            // ============================================================
+            // FORMULARIO DE REGISTRO
+            // ============================================================
+
+            item {
+                CompaSOSTextField(
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    placeholder = "Nombre",
+                    icon = Icons.Filled.Person,
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = apellidoPaterno,
+                    onValueChange = { apellidoPaterno = it },
+                    placeholder = "Apellido Paterno",
+                    icon = Icons.Filled.Person,
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = apellidoMaterno,
+                    onValueChange = { apellidoMaterno = it },
+                    placeholder = "Apellido Materno (opcional)",
+                    icon = Icons.Filled.Person,
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = correo,
+                    onValueChange = { correo = it },
+                    placeholder = "Correo Electrónico",
+                    icon = Icons.Filled.Email,
+                    keyboardType = KeyboardType.Email,
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = telefono,
+                    onValueChange = { telefono = it },
+                    placeholder = "Teléfono (opcional)",
+                    icon = Icons.Filled.Phone,
+                    keyboardType = KeyboardType.Phone,
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    placeholder = "Contraseña (mínimo 6 caracteres)",
+                    icon = Icons.Filled.Lock,
+                    isPassword = true,
+                    passwordVisible = mostrarPassword,
+                    onTogglePasswordVisibility = { mostrarPassword = !mostrarPassword },
+                    enabled = !estaCargando
+                )
+            }
+
+            item {
+                CompaSOSTextField(
+                    value = passwordConfirm,
+                    onValueChange = { passwordConfirm = it },
+                    placeholder = "Confirmar Contraseña",
+                    icon = Icons.Filled.Lock,
+                    isPassword = true,
+                    passwordVisible = mostrarPasswordConfirm,
+                    onTogglePasswordVisibility = { mostrarPasswordConfirm = !mostrarPasswordConfirm },
+                    enabled = !estaCargando
+                )
+            }
+
+            // ============================================================
+            // VALIDACIONES Y MENSAJES
+            // ============================================================
+
+            item {
+                if (!passwordValido && password.isNotEmpty()) {
+                    CompaSOSAlertBanner(
+                        mensaje = "La contraseña debe tener mínimo 6 caracteres",
+                        tipo = CompaSOSAlertType.Advertencia,
+                        visible = true
+                    )
+                } else if (!passwordsCoinciden && passwordConfirm.isNotEmpty()) {
+                    CompaSOSAlertBanner(
+                        mensaje = "Las contraseñas no coinciden",
+                        tipo = CompaSOSAlertType.Advertencia,
+                        visible = true
+                    )
+                }
+            }
+
+            item {
+                Button(
+                    onClick = {
+                        authViewModel.clearError()
+                        authViewModel.registrar(
+                            nombre = nombre,
+                            apellidoPaterno = apellidoPaterno,
+                            apellidoMaterno = apellidoMaterno.takeIf { it.isNotEmpty() },
+                            correo = correo,
+                            password = password,
+                            telefono = telefono.takeIf { it.isNotEmpty() }
+                        )
+                    },
+                    enabled = puedeRegistrar,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CompaSOSColors.AccentBlue,
+                        disabledContainerColor = CompaSOSColors.AccentBlue.copy(alpha = 0.4f)
+                    )
+                ) {
+                    if (estaCargando) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = CompaSOSColors.TextPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("CREAR CUENTA", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("¿Ya tienes cuenta? ", color = CompaSOSColors.TextSecondary, fontSize = 13.sp)
+                    Text(
+                        "Inicia sesión",
+                        color = CompaSOSColors.AccentBlue,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable(
+                            enabled = !estaCargando,
+                            onClick = {
+                                navController.navigate(Screen.Login.route) {
+                                    popUpTo(Screen.Registro.route) { inclusive = true }
+                                }
+                            }
+                        )
+                    )
+                }
+            }
+
+            item {
+                Spacer(Modifier.height(16.dp))
             }
         }
 
-        // Toast flotante: feedback cuando el registro falla en el backend
-        // (ej. correo ya registrado).
+        // Toast flotante: feedback del registro
         CompaSOSAlertToast(
             mensaje = aviso.mensaje,
             tipo = aviso.tipo,
@@ -279,97 +279,38 @@ fun RegistroUsuarioScreen(
             modifier = Modifier.align(Alignment.TopCenter)
         )
     }
-}
 
-@Composable
-private fun LogoCompaSOS() {
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text(
-            text = "Compa",
-            color = CompaSOSColors.TextPrimary,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = "SOS",
-            color = CompaSOSColors.AccentBlue,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
-    }
-}
+    // ============================================================
+    // MANEJO DE ESTADOS DEL REGISTRO
+    // ============================================================
 
-@Composable
-private fun FotoPerfilPicker(fotoUri: String?, onClick: () -> Unit) {
-    Box(contentAlignment = Alignment.BottomEnd) {
-        Box(
-            modifier = Modifier
-                .size(88.dp)
-                .background(CompaSOSColors.FieldBackground, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Person,
-                contentDescription = "Foto de perfil",
-                tint = CompaSOSColors.AccentBlue,
-                modifier = Modifier.size(48.dp)
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .background(CompaSOSColors.AccentBlue, CircleShape)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Add,
-                contentDescription = "Agregar foto",
-                tint = Color.White,
-                modifier = Modifier.size(16.dp)
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SexoDropdown(sexoSeleccionado: String, onSexoSeleccionado: (String) -> Unit) {
-    var expandido by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expandido, onExpandedChange = { expandido = it }) {
-        OutlinedTextField(
-            value = sexoSeleccionado,
-            onValueChange = {},
-            readOnly = true,
-            placeholder = { Text("Sexo", color = CompaSOSColors.TextSecondary) },
-            leadingIcon = {
-                Icon(Icons.Filled.Wc, contentDescription = null, tint = CompaSOSColors.IconTint)
-            },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandido) },
-            colors = compaSOSTextFieldColors(),
-            shape = RoundedCornerShape(CompaSOSFieldShapeRadius),
-            modifier = Modifier
-                .menuAnchor()
-                .fillMaxWidth()
-        )
-        ExposedDropdownMenu(expanded = expandido, onDismissRequest = { expandido = false }) {
-            opcionesSexo.forEach { opcion ->
-                DropdownMenuItem(
-                    text = { Text(opcion) },
-                    onClick = {
-                        onSexoSeleccionado(opcion)
-                        expandido = false
-                    }
-                )
+    LaunchedEffect(authState) {
+        when (authState) {
+            is AuthState.Success -> {
+                aviso.mostrar("✓ Registro exitoso. Inicia sesión.", CompaSOSAlertType.Exito)
+                // Navegar al login después de un breve delay
+                kotlinx.coroutines.delay(1500)
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(Screen.Registro.route) { inclusive = true }
+                }
             }
+
+            is AuthState.Error -> {
+                val mensaje = (authState as AuthState.Error).mensaje
+                aviso.mostrar("✗ $mensaje", CompaSOSAlertType.Error)
+            }
+
+            is AuthState.Loading -> {
+                // No hacer nada, el botón ya muestra el spinner
+            }
+
+            else -> {}
         }
     }
 }
 
 /**
- * Campo de texto reutilizable con el look del mockup: bordes redondeados,
- * ícono a la izquierda y, si es password, ícono de mostrar/ocultar a la derecha.
- * Si se pasa onClick (usado para el selector de fecha), el campo es de solo lectura y clickeable.
+ * Campo de texto reutilizable
  */
 @Composable
 private fun CompaSOSTextField(
@@ -382,6 +323,7 @@ private fun CompaSOSTextField(
     passwordVisible: Boolean = false,
     onTogglePasswordVisibility: (() -> Unit)? = null,
     readOnly: Boolean = false,
+    enabled: Boolean = true,
     onClick: (() -> Unit)? = null
 ) {
     OutlinedTextField(
@@ -406,6 +348,7 @@ private fun CompaSOSTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         singleLine = true,
         readOnly = readOnly,
+        enabled = enabled,
         colors = compaSOSTextFieldColors(),
         shape = RoundedCornerShape(CompaSOSFieldShapeRadius),
         modifier = Modifier
