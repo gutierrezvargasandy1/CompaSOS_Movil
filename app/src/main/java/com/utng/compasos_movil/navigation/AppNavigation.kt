@@ -1,49 +1,145 @@
 package com.utng.compasos_movil.navigation
 
+import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.utng.compasos_movil.AuthModule.AuthService
+import com.utng.compasos_movil.AuthModule.AuthViewModel
+import com.utng.compasos_movil.ProfileModule.PerfilMedicoRepository
+import com.utng.compasos_movil.data.dao.AlertaDao
+import com.utng.compasos_movil.data.dao.ContactoEmergenciaDao
+import com.utng.compasos_movil.data.dao.DispositivoDao
+import com.utng.compasos_movil.data.dao.FamiliaDao
+import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.NotificacionDao
+import com.utng.compasos_movil.data.dao.PerfilMedicoDao
+import com.utng.compasos_movil.data.dao.UsuarioDao
+import com.utng.compasos_movil.data.entity.AlertaEntity
+import com.utng.compasos_movil.data.entity.DispositivoEntity
+import com.utng.compasos_movil.data.entity.HistorialUbicacionEntity
+import com.utng.compasos_movil.data.entity.NotificacionEntity
+import com.utng.compasos_movil.data.entity.UsuarioEntity
+import com.utng.compasos_movil.data.repository.UsuarioRepository
+import com.utng.compasos_movil.data.wrapper.UsuarioConUbicacionesWrapper
+import com.utng.compasos_movil.ui.screens.ContactosEmergenciaScreen
 import com.utng.compasos_movil.ui.screens.DashboardScreen
+import com.utng.compasos_movil.ui.screens.DispositivosScreen
+import com.utng.compasos_movil.ui.screens.EditProfileScreen
+import com.utng.compasos_movil.ui.screens.FamiliaScreen
+import com.utng.compasos_movil.ui.screens.HistorialUbicacionesScreen
 import com.utng.compasos_movil.ui.screens.LoginScreen
+import com.utng.compasos_movil.ui.screens.NotificacionesScreen
 import com.utng.compasos_movil.ui.screens.PerfilMedicoScreen
+import com.utng.compasos_movil.ui.screens.ProfileScreen
 import com.utng.compasos_movil.ui.screens.RegistroUsuarioScreen
 import com.utng.compasos_movil.ui.screens.molals.MenuUsuario
+import com.utng.compasos_movil.utils.SessionManager
+
+// ============================================================
+// FACTORY PARA CREAR AUTHVIEWMODEL CON DEPENDENCIAS
+// ============================================================
+
+class AuthViewModelFactory(
+    private val authService: AuthService,
+    private val sessionManager: SessionManager
+) : androidx.lifecycle.ViewModelProvider.Factory {
+
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(AuthViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return AuthViewModel(authService, sessionManager) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+// ============================================================
+// NAVEGACIÓN COMPLETA
+// ============================================================
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(
+    usuarioDao: UsuarioDao,
+    perfilMedicoDao: PerfilMedicoDao,
+    familiaDao: FamiliaDao,
+    familiaUsuarioDao: FamiliaUsuarioDao,
+    contactoEmergenciaDao: ContactoEmergenciaDao,
+    notificacionDao: NotificacionDao,
+    dispositivoDao: DispositivoDao,
+    alertaDao: AlertaDao,
+    context: Context
+) {
     val navController = rememberNavController()
+
+    // ============================================================
+    // CREAR INSTANCIAS DE REPOSITORIOS Y SERVICIOS
+    // ============================================================
+
+    val usuarioRepository      = UsuarioRepository(usuarioDao)
+    val perfilMedicoRepository = PerfilMedicoRepository(perfilMedicoDao)
+    val authService            = AuthService(usuarioRepository)
+    val sessionManager         = SessionManager(context)
+
+    val authViewModel: AuthViewModel = viewModel(
+        factory = AuthViewModelFactory(authService, sessionManager)
+    )
+
+    // ============================================================
+    // NAVHOST
+    // ============================================================
+
     NavHost(
         navController = navController,
         startDestination = Screen.Login.route
     ) {
 
+        // ============================================================
+        // AUTENTICACIÓN
+        // ============================================================
+
         composable(Screen.Login.route) {
-            LoginScreen(navController)
+            LoginScreen(
+                navController = navController,
+                authViewModel = authViewModel
+            )
         }
 
         composable(Screen.Registro.route) {
-            RegistroUsuarioScreen(navController)
+            RegistroUsuarioScreen(
+                navController = navController,
+                authViewModel = authViewModel
+            )
         }
+
+        // ============================================================
+        // PERFIL MÉDICO (POST-REGISTRO)
+        // ============================================================
 
         composable(Screen.PerfilMedico.route) {
             PerfilMedicoScreen(navController)
         }
 
+        // ============================================================
+        // APLICACIÓN PRINCIPAL
+        // ============================================================
+
         composable(Screen.Dashboard.route) {
             DashboardScreen(
                 navController = navController,
-                // TODO: reemplazar por el usuario real (de tu ViewModel/sesión)
                 usuario = MenuUsuario(
-                    nombreCompleto = "Usuario",
-                    correo = "usuario@correo.com"
+                    nombreCompleto = sessionManager.obtenerUsuarioNombre() ?: "Usuario",
+                    correo         = sessionManager.obtenerUsuarioEmail()  ?: "usuario@correo.com"
                 ),
                 onCerrarSesion = {
+                    authViewModel.logout()
                     navController.navigate(Screen.Login.route) {
                         popUpTo(0) { inclusive = true }
                     }
@@ -51,25 +147,120 @@ fun AppNavigation() {
             )
         }
 
-        // --- Pantallas del menú lateral: placeholders temporales ---
-        // Reemplaza cada una por su pantalla real cuando esté lista, o el
-        // NavController volverá a truenar si algún día borras una de estas
-        // líneas mientras Screen.kt sigue apuntando a esa ruta.
+        // ============================================================
+        // PERFIL
+        // ============================================================
+
+        composable(Screen.Perfil.route) {
+            ProfileScreen(
+                navController          = navController,
+                usuarioRepository      = usuarioRepository,
+                perfilMedicoRepository = perfilMedicoRepository,
+                sessionManager         = sessionManager
+            )
+        }
+
+        // ============================================================
+        // EDITAR PERFIL
+        // ============================================================
+
+        composable(Screen.EditarPerfil.route) {
+            EditProfileScreen(
+                navController          = navController,
+                usuarioRepository      = usuarioRepository,
+                perfilMedicoRepository = perfilMedicoRepository,
+                sessionManager         = sessionManager
+            )
+        }
+
+        // ============================================================
+        // CONTACTOS DE EMERGENCIA
+        // ============================================================
+
         composable(Screen.ContactosEmergencia.route) {
-            PantallaPlaceholder("Contactos de emergencia")
+            ContactosEmergenciaScreen(
+                navController         = navController,
+                usuarioDao            = usuarioDao,
+                contactoEmergenciaDao = contactoEmergenciaDao
+            )
         }
+        // ============================================================
+        // FAMILIA  ← recibe los DAOs reales
+        // ============================================================
+
         composable(Screen.Familia.route) {
-            PantallaPlaceholder("Familia")
+            FamiliaScreen(
+                navController     = navController,
+                usuarioDao        = usuarioDao,
+                familiaDao        = familiaDao,
+                familiaUsuarioDao = familiaUsuarioDao
+            )
         }
+
+        // ============================================================
+        // DISPOSITIVOS
+        // ============================================================
+
         composable(Screen.Dispositivos.route) {
-            PantallaPlaceholder("Dispositivos")
+            DispositivosScreen(
+                navController  = navController,
+                dispositivoDao = dispositivoDao,
+                usuarioDao     = usuarioDao
+            )
         }
-        composable(Screen.HistorialUbicaciones.route) {
-            PantallaPlaceholder("Historial de ubicaciones")
+
+        // ============================================================
+        // HISTORIAL DE UBICACIONES
+        // ============================================================
+
+        composable(route = Screen.HistorialUbicaciones.route) {
+            val usuarioEstático = UsuarioEntity(
+                id              = "user_123",
+                nombre          = "Juan",
+                apellidoPaterno = "Pérez",
+                apellidoMaterno = "García",
+                correo          = "juan.perez@example.com",
+                password        = "hashedPassword",
+                telefono        = "+52 8123456789",
+                foto            = null,
+                fechaNacimiento = "1995-05-15",
+                sexo            = "M",
+                activo          = true,
+                fechaRegistro   = "2024-01-15"
+            )
+
+            val ubicacionesEstáticas = listOf(
+                HistorialUbicacionEntity("ubicacion_1", "user_123", 25.6866, -100.3161, "2024-01-20 08:30:00"),
+                HistorialUbicacionEntity("ubicacion_2", "user_123", 25.6900, -100.3100, "2024-01-20 09:15:00"),
+                HistorialUbicacionEntity("ubicacion_3", "user_123", 25.6950, -100.3050, "2024-01-20 10:45:00"),
+                HistorialUbicacionEntity("ubicacion_4", "user_123", 25.7000, -100.2900, "2024-01-20 12:30:00"),
+                HistorialUbicacionEntity("ubicacion_5", "user_123", 25.6850, -100.3200, "2024-01-20 14:20:00")
+            )
+
+            HistorialUbicacionesScreen(
+                usuarioConUbicaciones = UsuarioConUbicacionesWrapper(
+                    usuario             = usuarioEstático,
+                    historialUbicaciones = ubicacionesEstáticas
+                )
+            )
         }
+
+        // ============================================================
+        // NOTIFICACIONES
+        // ============================================================
+
         composable(Screen.Notificaciones.route) {
-            PantallaPlaceholder("Notificaciones")
+            NotificacionesScreen(
+                navController   = navController,
+                notificacionDao = notificacionDao,
+                alertaDao       = alertaDao
+            )
         }
+
+        // ============================================================
+        // CONFIGURACIÓN (Placeholder)
+        // ============================================================
+
         composable(Screen.Configuracion.route) {
             PantallaPlaceholder("Configuración")
         }
@@ -78,10 +269,7 @@ fun AppNavigation() {
 
 @Composable
 private fun PantallaPlaceholder(titulo: String) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text("$titulo — pantalla en construcción")
     }
 }

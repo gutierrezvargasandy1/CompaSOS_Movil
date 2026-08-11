@@ -133,7 +133,7 @@ fun DashboardScreen(
                         },
                         onEditarPerfil = {
                             scope.launch { drawerState.close() }
-                            navController.navigate(Screen.PerfilMedico.route)
+                            navController.navigate(Screen.Perfil.route)
                         }
                     )
                 }

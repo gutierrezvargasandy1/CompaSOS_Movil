@@ -13,16 +13,47 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // ============================================================
+        // CREAR INSTANCIA DE LA BASE DE DATOS
+        // ============================================================
+
         val db = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java,
             "compasos.db"
         ).build()
 
+        // ============================================================
+        // OBTENER DAOS
+        // ============================================================
+
+        val usuarioDao        = db.usuarioDao()
+        val perfilMedicoDao   = db.perfilMedicoDao()
+        val familiaDao        = db.familiaDao()
+        val familiaUsuarioDao = db.familiaUsuarioDao()
+        val contactoEmergenciaDao = db.contactoEmergenciaDao()
+        val notificacionDao       = db.notificacionDao()   // ← nuevo
+        val alertaDao             = db.alertaDao()
+        val dispositivoDao        = db.dispositivoDao()
+
+        // ============================================================
+        // CONFIGURAR CONTENIDO CON NAVEGACIÓN
+        // ============================================================
+
         setContent {
             CompaSOS_MovilTheme {
-                AppNavigation()
-
+                AppNavigation(
+                    usuarioDao        = usuarioDao,
+                    perfilMedicoDao   = perfilMedicoDao,
+                    familiaDao        = familiaDao,
+                    familiaUsuarioDao = familiaUsuarioDao,
+                    contactoEmergenciaDao = contactoEmergenciaDao,
+                    notificacionDao       = notificacionDao,   // ← nuevo
+                    alertaDao             = alertaDao,
+                    dispositivoDao        = dispositivoDao,
+                    context           = applicationContext
+                )
             }
         }
     }
