@@ -28,8 +28,10 @@ class MainActivity : ComponentActivity() {
         // OBTENER DAOS
         // ============================================================
 
-        val usuarioDao = db.usuarioDao()
-        val perfilMedicoDao = db.perfilMedicoDao()
+        val usuarioDao        = db.usuarioDao()
+        val perfilMedicoDao   = db.perfilMedicoDao()
+        val familiaDao        = db.familiaDao()
+        val familiaUsuarioDao = db.familiaUsuarioDao()
 
         // ============================================================
         // CONFIGURAR CONTENIDO CON NAVEGACIÓN
@@ -38,9 +40,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             CompaSOS_MovilTheme {
                 AppNavigation(
-                    usuarioDao = usuarioDao,
-                    perfilMedicoDao = perfilMedicoDao,
-                    context = applicationContext
+                    usuarioDao        = usuarioDao,
+                    perfilMedicoDao   = perfilMedicoDao,
+                    familiaDao        = familiaDao,
+                    familiaUsuarioDao = familiaUsuarioDao,
+                    context           = applicationContext
                 )
             }
         }

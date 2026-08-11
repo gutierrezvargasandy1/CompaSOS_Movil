@@ -18,9 +18,21 @@ interface UsuarioDao {
     @Query("SELECT * FROM usuarios")
     suspend fun obtenerTodos(): List<UsuarioEntity>
 
-    @Query("SELECT * FROM usuarios WHERE id = :usuarioId")
-    suspend fun obtenerPorId(usuarioId: String): UsuarioEntity?
+    @Query("SELECT * FROM usuarios WHERE id = :id")
+    suspend fun obtenerPorId(id: String): UsuarioEntity?
 
+    @Query("""
+    SELECT * FROM usuarios
+    WHERE activo = 1
+      AND (nombre LIKE '%' || :texto || '%'
+           OR apellidoPaterno LIKE '%' || :texto || '%'
+           OR apellidoMaterno LIKE '%' || :texto || '%'
+           OR correo LIKE '%' || :texto || '%')
+    LIMIT 20
+""")
+    suspend fun buscar(texto: String): List<UsuarioEntity>
     @Query("SELECT * FROM usuarios WHERE correo = :correo")
     suspend fun obtenerPorCorreo(correo: String): UsuarioEntity?
+
+
 }

@@ -13,4 +13,7 @@ interface FamiliaDao {
 
     @Query("SELECT * FROM familias")
     suspend fun obtenerTodas(): List<FamiliaEntity>
+
+    @Query("SELECT * FROM familias WHERE id = :id")
+    suspend fun obtenerPorId(id: String): FamiliaEntity?
 }
