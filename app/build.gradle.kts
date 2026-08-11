@@ -90,6 +90,9 @@ dependencies {
 
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // En el bloque dependencies:
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
 
 
 

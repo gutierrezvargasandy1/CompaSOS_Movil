@@ -19,4 +19,7 @@ interface AlertaDao {
 
     @Query("SELECT * FROM alertas WHERE estado = :estado")
     suspend fun obtenerPorEstado(estado: String): List<AlertaEntity>
+
+    @Query("SELECT * FROM alertas WHERE id = :id")
+    suspend fun obtenerPorId(id: String): AlertaEntity?
 }

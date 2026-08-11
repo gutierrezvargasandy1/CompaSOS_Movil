@@ -14,55 +14,71 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.utng.compasos_movil.data.entity.AlertaEntity
-import com.utng.compasos_movil.data.entity.NotificacionEntity
+import com.utng.compasos_movil.NotificacionesModule.NotificacionConAlerta
+import com.utng.compasos_movil.NotificacionesModule.NotificacionesViewModel
+import com.utng.compasos_movil.NotificacionesModule.NotificacionesViewModelFactory
+import com.utng.compasos_movil.data.dao.AlertaDao
+import com.utng.compasos_movil.data.dao.NotificacionDao
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
+import com.utng.compasos_movil.utils.SessionManager
 
-private val ExitoColor = Color(0xFF4CAF50)
-private val PendienteColor = Color(0xFFFFA726)
+private val ExitoColor      = Color(0xFF4CAF50)
+private val PendienteColor  = Color(0xFFFFA726)
 private val ErrorColorNotif = Color(0xFFE53935)
-
-/**
- * Une una notificación con su alerta relacionada (opcional). Si tu DAO ya
- * hace el join por alertaId, mapea el resultado a esto; si solo tienes la
- * lista de NotificacionEntity, pásala con alerta = null — la tarjeta usa lo
- * que haya disponible y no depende de que el join exista.
- */
-data class NotificacionConAlerta(
-    val notificacion: NotificacionEntity,
-    val alerta: AlertaEntity? = null
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificacionesScreen(
     navController: NavController,
-    notificaciones: List<NotificacionConAlerta> = emptyList()
+    notificacionDao: NotificacionDao,
+    alertaDao: AlertaDao
 ) {
+    val context = LocalContext.current
+    val viewModel: NotificacionesViewModel = viewModel(
+        factory = NotificacionesViewModelFactory(
+            notificacionDao = notificacionDao,
+            alertaDao = alertaDao,
+            sessionManager = SessionManager(context)
+        )
+    )
+    val uiState by viewModel.uiState.collectAsState()
+
     Scaffold(
         containerColor = CompaSOSColors.Background,
         topBar = {
             TopAppBar(
                 title = {
-                    Text("Notificaciones", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Notificaciones",
+                        color = CompaSOSColors.TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Regresar", tint = CompaSOSColors.IconTint)
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Regresar",
+                            tint = CompaSOSColors.IconTint
+                        )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CompaSOSColors.Background)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = CompaSOSColors.Background
+                )
             )
         }
     ) { padding ->
@@ -72,22 +88,39 @@ fun NotificacionesScreen(
                 .background(CompaSOSColors.Background)
                 .padding(padding)
         ) {
-            if (notificaciones.isEmpty()) {
-                EstadoSinNotificaciones(modifier = Modifier.align(Alignment.Center))
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(notificaciones, key = { it.notificacion.id }) { item ->
-                        TarjetaNotificacion(item)
+            when {
+                uiState.cargando -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CompaSOSColors.AccentBlue)
+                    }
+                }
+
+                uiState.notificaciones.isEmpty() -> {
+                    EstadoSinNotificaciones(modifier = Modifier.align(Alignment.Center))
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = uiState.notificaciones,
+                            key   = { it.notificacion.id }
+                        ) { item ->
+                            TarjetaNotificacion(item)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+// ============================================================
+// COMPOSABLES PRIVADOS
+// ============================================================
 
 @Composable
 private fun EstadoSinNotificaciones(modifier: Modifier = Modifier) {
@@ -145,13 +178,23 @@ private fun TarjetaNotificacion(item: NotificacionConAlerta) {
                 .background(color.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icono, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+            Icon(
+                icono,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(18.dp)
+            )
         }
 
         Spacer(Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(titulo, color = CompaSOSColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(
+                titulo,
+                color = CompaSOSColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
 
             item.alerta?.descripcion?.let { descripcion ->
                 Spacer(Modifier.height(2.dp))
@@ -160,7 +203,11 @@ private fun TarjetaNotificacion(item: NotificacionConAlerta) {
 
             item.notificacion.destinatario?.let { destinatario ->
                 Spacer(Modifier.height(4.dp))
-                Text("Enviado a $destinatario", color = CompaSOSColors.TextSecondary, fontSize = 11.sp)
+                Text(
+                    "Enviado a $destinatario",
+                    color = CompaSOSColors.TextSecondary,
+                    fontSize = 11.sp
+                )
             }
 
             Spacer(Modifier.height(6.dp))
@@ -185,12 +232,6 @@ private fun TarjetaNotificacion(item: NotificacionConAlerta) {
     }
 }
 
-/**
- * Ícono y color según el texto libre de `estado`. Cubre las variantes en
- * español más comunes; cualquier valor que no reconozca cae en el estado
- * neutro en vez de romperse, así que es seguro aunque tu backend use otros
- * nombres — solo agrega tus strings exactos a la lista correspondiente.
- */
 private fun estiloEstado(estado: String?): Pair<ImageVector, Color> {
     return when (estado?.trim()?.lowercase()) {
         "enviada", "enviado", "entregada", "entregado", "completada", "exitosa" ->

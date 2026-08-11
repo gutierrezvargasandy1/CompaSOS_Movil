@@ -32,6 +32,10 @@ class MainActivity : ComponentActivity() {
         val perfilMedicoDao   = db.perfilMedicoDao()
         val familiaDao        = db.familiaDao()
         val familiaUsuarioDao = db.familiaUsuarioDao()
+        val contactoEmergenciaDao = db.contactoEmergenciaDao()
+        val notificacionDao       = db.notificacionDao()   // ← nuevo
+        val alertaDao             = db.alertaDao()
+        val dispositivoDao        = db.dispositivoDao()
 
         // ============================================================
         // CONFIGURAR CONTENIDO CON NAVEGACIÓN
@@ -44,6 +48,10 @@ class MainActivity : ComponentActivity() {
                     perfilMedicoDao   = perfilMedicoDao,
                     familiaDao        = familiaDao,
                     familiaUsuarioDao = familiaUsuarioDao,
+                    contactoEmergenciaDao = contactoEmergenciaDao,
+                    notificacionDao       = notificacionDao,   // ← nuevo
+                    alertaDao             = alertaDao,
+                    dispositivoDao        = dispositivoDao,
                     context           = applicationContext
                 )
             }

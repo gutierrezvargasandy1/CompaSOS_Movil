@@ -14,8 +14,12 @@ import androidx.navigation.compose.rememberNavController
 import com.utng.compasos_movil.AuthModule.AuthService
 import com.utng.compasos_movil.AuthModule.AuthViewModel
 import com.utng.compasos_movil.ProfileModule.PerfilMedicoRepository
+import com.utng.compasos_movil.data.dao.AlertaDao
+import com.utng.compasos_movil.data.dao.ContactoEmergenciaDao
+import com.utng.compasos_movil.data.dao.DispositivoDao
 import com.utng.compasos_movil.data.dao.FamiliaDao
 import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.NotificacionDao
 import com.utng.compasos_movil.data.dao.PerfilMedicoDao
 import com.utng.compasos_movil.data.dao.UsuarioDao
 import com.utng.compasos_movil.data.entity.AlertaEntity
@@ -27,13 +31,11 @@ import com.utng.compasos_movil.data.repository.UsuarioRepository
 import com.utng.compasos_movil.data.wrapper.UsuarioConUbicacionesWrapper
 import com.utng.compasos_movil.ui.screens.ContactosEmergenciaScreen
 import com.utng.compasos_movil.ui.screens.DashboardScreen
-import com.utng.compasos_movil.ui.screens.DispositivoConUsuario
 import com.utng.compasos_movil.ui.screens.DispositivosScreen
 import com.utng.compasos_movil.ui.screens.EditProfileScreen
 import com.utng.compasos_movil.ui.screens.FamiliaScreen
 import com.utng.compasos_movil.ui.screens.HistorialUbicacionesScreen
 import com.utng.compasos_movil.ui.screens.LoginScreen
-import com.utng.compasos_movil.ui.screens.NotificacionConAlerta
 import com.utng.compasos_movil.ui.screens.NotificacionesScreen
 import com.utng.compasos_movil.ui.screens.PerfilMedicoScreen
 import com.utng.compasos_movil.ui.screens.ProfileScreen
@@ -69,6 +71,10 @@ fun AppNavigation(
     perfilMedicoDao: PerfilMedicoDao,
     familiaDao: FamiliaDao,
     familiaUsuarioDao: FamiliaUsuarioDao,
+    contactoEmergenciaDao: ContactoEmergenciaDao,
+    notificacionDao: NotificacionDao,
+    dispositivoDao: DispositivoDao,
+    alertaDao: AlertaDao,
     context: Context
 ) {
     val navController = rememberNavController()
@@ -172,9 +178,12 @@ fun AppNavigation(
         // ============================================================
 
         composable(Screen.ContactosEmergencia.route) {
-            ContactosEmergenciaScreen(navController = navController)
+            ContactosEmergenciaScreen(
+                navController         = navController,
+                usuarioDao            = usuarioDao,
+                contactoEmergenciaDao = contactoEmergenciaDao
+            )
         }
-
         // ============================================================
         // FAMILIA  ← recibe los DAOs reales
         // ============================================================
@@ -194,65 +203,9 @@ fun AppNavigation(
 
         composable(Screen.Dispositivos.route) {
             DispositivosScreen(
-                navController = navController,
-                dispositivos = listOf(
-                    DispositivoConUsuario(
-                        dispositivo = DispositivoEntity(
-                            id               = "1",
-                            usuarioId        = "u1",
-                            tipo             = "reloj",
-                            modelo           = "Watch Series 9",
-                            fabricante       = "Apple",
-                            numeroSerie      = null,
-                            tokenFcm         = null,
-                            bateria          = 78,
-                            conectado        = true,
-                            fechaVinculacion = "12 jul 2026"
-                        ),
-                        usuario = UsuarioEntity(
-                            id              = "u1",
-                            nombre          = "Mamá",
-                            apellidoPaterno = null,
-                            apellidoMaterno = null,
-                            correo          = "mama@correo.com",
-                            password        = "",
-                            telefono        = null,
-                            foto            = null,
-                            fechaNacimiento = null,
-                            sexo            = null,
-                            activo          = true,
-                            fechaRegistro   = "12 jul 2026"
-                        )
-                    ),
-                    DispositivoConUsuario(
-                        dispositivo = DispositivoEntity(
-                            id               = "2",
-                            usuarioId        = "u2",
-                            tipo             = "reloj",
-                            modelo           = "Galaxy Watch",
-                            fabricante       = "Samsung",
-                            numeroSerie      = null,
-                            tokenFcm         = null,
-                            bateria          = 15,
-                            conectado        = true,
-                            fechaVinculacion = "03 ago 2026"
-                        )
-                    ),
-                    DispositivoConUsuario(
-                        dispositivo = DispositivoEntity(
-                            id               = "3",
-                            usuarioId        = "u3",
-                            tipo             = "telefono",
-                            modelo           = "iPhone 15",
-                            fabricante       = "Apple",
-                            numeroSerie      = null,
-                            tokenFcm         = null,
-                            bateria          = null,
-                            conectado        = false,
-                            fechaVinculacion = "20 jun 2026"
-                        )
-                    )
-                )
+                navController  = navController,
+                dispositivoDao = dispositivoDao,
+                usuarioDao     = usuarioDao
             )
         }
 
@@ -298,19 +251,9 @@ fun AppNavigation(
 
         composable(Screen.Notificaciones.route) {
             NotificacionesScreen(
-                navController = navController,
-                notificaciones = listOf(
-                    NotificacionConAlerta(
-                        notificacion = NotificacionEntity("1", "a1", "Mamá",    "SMS",    "enviada",   "09 ago 2026, 10:14"),
-                        alerta       = AlertaEntity("a1", "u1", null, "Botón de pánico", "Alerta activada manualmente", "activa", "09 ago 2026, 10:14")
-                    ),
-                    NotificacionConAlerta(
-                        notificacion = NotificacionEntity("2", "a1", "Papá",    "SMS",     "pendiente", "09 ago 2026, 10:14")
-                    ),
-                    NotificacionConAlerta(
-                        notificacion = NotificacionEntity("3", "a2", "Hermano", "Llamada", "fallida",   "08 ago 2026, 22:03")
-                    )
-                )
+                navController   = navController,
+                notificacionDao = notificacionDao,
+                alertaDao       = alertaDao
             )
         }
 

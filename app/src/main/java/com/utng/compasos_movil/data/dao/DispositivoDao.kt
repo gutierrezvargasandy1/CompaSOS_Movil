@@ -16,4 +16,11 @@ interface DispositivoDao {
 
     @Query("SELECT * FROM dispositivos WHERE usuarioId = :usuarioId")
     suspend fun obtenerPorUsuario(usuarioId: String): List<DispositivoEntity>
+
+    @Query("SELECT * FROM dispositivos WHERE id = :id")
+    suspend fun obtenerPorId(id: String): DispositivoEntity?
+
+    // Actualiza batería y estado de conexión cuando llega un mensaje MQTT de estado
+    @Query("UPDATE dispositivos SET bateria = :bateria, conectado = :conectado WHERE id = :id")
+    suspend fun actualizarEstado(id: String, bateria: Int?, conectado: Boolean)
 }
