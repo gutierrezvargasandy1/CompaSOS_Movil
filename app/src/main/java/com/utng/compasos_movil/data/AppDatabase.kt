@@ -1,6 +1,8 @@
 package com.utng.compasos_movil.data
 
+import android.content.Context
 import androidx.room3.Database
+import androidx.room3.Room
 import androidx.room3.RoomDatabase
 import com.utng.compasos_movil.data.dao.AlertaDao
 import com.utng.compasos_movil.data.dao.AlertaOficialDao
@@ -50,39 +52,42 @@ import com.utng.compasos_movil.data.entity.UsuarioEntity
         FamiliaEntity::class,
         FamiliaUsuarioEntity::class,
         Llamada911Entity::class
-               ],
+    ],
     version = 2
 )
 abstract class AppDatabase : RoomDatabase() {
 
-    abstract fun usuarioDao(): UsuarioDao
-
-    abstract fun perfilMedicoDao(): PerfilMedicoDao
-
+    abstract fun usuarioDao():            UsuarioDao
+    abstract fun perfilMedicoDao():       PerfilMedicoDao
     abstract fun contactoEmergenciaDao(): ContactoEmergenciaDao
-
-    abstract fun dispositivoDao(): DispositivoDao
-
-    abstract fun alertaDao(): AlertaDao
-
-    abstract fun ubicacionDao(): UbicacionDao
-
-    abstract fun audioDao(): AudioDao
-
-    abstract fun sensorDao(): SensorDao
-
-    abstract fun notificacionDao(): NotificacionDao
-
-    abstract fun seguimientoDao(): SeguimientoDao
-
-    abstract fun alertaOficialDao(): AlertaOficialDao
-
+    abstract fun dispositivoDao():        DispositivoDao
+    abstract fun alertaDao():             AlertaDao
+    abstract fun ubicacionDao():          UbicacionDao
+    abstract fun audioDao():              AudioDao
+    abstract fun sensorDao():             SensorDao
+    abstract fun notificacionDao():       NotificacionDao
+    abstract fun seguimientoDao():        SeguimientoDao
+    abstract fun alertaOficialDao():      AlertaOficialDao
     abstract fun historialUbicacionDao(): HistorialUbicacionDao
+    abstract fun familiaDao():            FamiliaDao
+    abstract fun familiaUsuarioDao():     FamiliaUsuarioDao
+    abstract fun llamada911Dao():         Llamada911Dao
 
-    abstract fun familiaDao(): FamiliaDao
+    // ── Singleton ─────────────────────────────────────────────────────────────
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
 
-    abstract fun familiaUsuarioDao(): FamiliaUsuarioDao
-
-    abstract fun llamada911Dao(): Llamada911Dao
-
+        fun getInstance(context: Context): AppDatabase =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "compasos.db"
+                )
+                    .fallbackToDestructiveMigration() // ← evita crash si sube version sin Migration
+                    .build()
+                    .also { INSTANCE = it }
+            }
+    }
 }

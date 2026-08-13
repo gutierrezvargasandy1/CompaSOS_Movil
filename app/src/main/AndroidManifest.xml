@@ -2,17 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permisos de Internet (necesario para descargar los tiles del mapa) -->
+    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Permisos de ubicación -->
+    <!-- Ubicación -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Mapbox guarda su caché en almacenamiento interno de la app, así que
-         WRITE/READ_EXTERNAL_STORAGE ya no hacen falta (eran para osmdroid). -->
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Otros -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -24,8 +29,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CompaSOS_Movil">
 
-        <!-- Token público de Mapbox. El valor real vive en un recurso que NO se
-             sube a git — ver res/values/developer-config.xml más abajo. -->
         <meta-data
             android:name="MAPBOX_ACCESS_TOKEN"
             android:value="@string/mapbox_access_token" />
@@ -38,10 +41,16 @@
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ✅ <service> siempre dentro de <application> -->
+        <service
+            android:name=".config.AlertaMqttService"
+            android:foregroundServiceType="location|dataSync"
+            android:exported="false" />
+
     </application>
 
 </manifest>

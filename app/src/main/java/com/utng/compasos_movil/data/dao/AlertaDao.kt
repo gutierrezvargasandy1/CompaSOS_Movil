@@ -14,12 +14,13 @@ interface AlertaDao {
     @Query("SELECT * FROM alertas")
     suspend fun obtenerTodas(): List<AlertaEntity>
 
-    @Query("SELECT * FROM alertas WHERE usuarioId = :usuarioId ORDER BY fecha DESC")
-    suspend fun obtenerPorUsuario(usuarioId: String): List<AlertaEntity>
 
     @Query("SELECT * FROM alertas WHERE estado = :estado")
     suspend fun obtenerPorEstado(estado: String): List<AlertaEntity>
 
     @Query("SELECT * FROM alertas WHERE id = :id")
     suspend fun obtenerPorId(id: String): AlertaEntity?
+
+    @Query("SELECT * FROM alertas WHERE usuarioId = :usuarioId ORDER BY fecha DESC")
+    suspend fun obtenerPorUsuario(usuarioId: String): List<AlertaEntity>
 }

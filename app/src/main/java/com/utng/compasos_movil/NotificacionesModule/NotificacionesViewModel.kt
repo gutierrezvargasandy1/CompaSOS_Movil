@@ -1,11 +1,11 @@
 package com.utng.compasos_movil.NotificacionesModule
 
-
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.utng.compasos_movil.data.dao.AlertaDao
 import com.utng.compasos_movil.data.dao.NotificacionDao
+import com.utng.compasos_movil.data.dao.UsuarioDao
 import com.utng.compasos_movil.data.entity.AlertaEntity
 import com.utng.compasos_movil.data.entity.NotificacionEntity
 import com.utng.compasos_movil.utils.SessionManager
@@ -15,48 +15,51 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-// Movido aquí desde NotificacionesScreen para que AppNavigation ya no lo necesite
 data class NotificacionConAlerta(
-    val notificacion: NotificacionEntity,
-    val alerta: AlertaEntity? = null
+    val notificacion:       NotificacionEntity,
+    val alerta:             AlertaEntity?,
+    val destinatarioNombre: String? = null   // ← nombre real en lugar del userId
 )
 
 data class NotificacionesUiState(
-    val cargando: Boolean = true,
-    val notificaciones: List<NotificacionConAlerta> = emptyList(),
-    val mensaje: String? = null
+    val cargando:       Boolean                    = true,
+    val notificaciones: List<NotificacionConAlerta> = emptyList()
 )
 
 class NotificacionesViewModel(
     private val notificacionDao: NotificacionDao,
-    private val alertaDao: AlertaDao,
-    private val sessionManager: SessionManager
+    private val alertaDao:       AlertaDao,
+    private val usuarioDao:      UsuarioDao,       // ← nuevo
+    private val sessionManager:  SessionManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(NotificacionesUiState())
     val uiState: StateFlow<NotificacionesUiState> = _uiState.asStateFlow()
 
-    init {
-        cargarNotificaciones()
-    }
+    init { cargar() }
 
-    fun cargarNotificaciones() {
+    private fun cargar() {
         viewModelScope.launch {
             _uiState.update { it.copy(cargando = true) }
 
-            val userId = sessionManager.obtenerUsuarioId()
-            if (userId == null) {
-                _uiState.update { it.copy(cargando = false, mensaje = "No hay sesión activa") }
+            val userId = sessionManager.obtenerUsuarioId() ?: run {
+                _uiState.update { it.copy(cargando = false) }
                 return@launch
             }
 
-            // Trae todas las notificaciones cuya alerta pertenece al usuario
             val notificaciones = notificacionDao.obtenerPorUsuario(userId)
 
-            // Para cada notificación, carga su alerta relacionada
             val items = notificaciones.map { notif ->
                 val alerta = alertaDao.obtenerPorId(notif.alertaId)
-                NotificacionConAlerta(notif, alerta)
+
+                // Resuelve el userId del destinatario a nombre legible
+                val nombre = notif.destinatario?.let { destId ->
+                    val u = usuarioDao.obtenerPorId(destId)
+                    if (u != null) "${u.nombre} ${u.apellidoPaterno ?: ""}".trim()
+                    else null
+                }
+
+                NotificacionConAlerta(notif, alerta, nombre)
             }
 
             _uiState.update { it.copy(cargando = false, notificaciones = items) }
@@ -66,15 +69,16 @@ class NotificacionesViewModel(
 
 class NotificacionesViewModelFactory(
     private val notificacionDao: NotificacionDao,
-    private val alertaDao: AlertaDao,
-    private val sessionManager: SessionManager
+    private val alertaDao:       AlertaDao,
+    private val usuarioDao:      UsuarioDao,       // ← nuevo
+    private val sessionManager:  SessionManager
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        @Suppress("UNCHECKED_CAST")
-        return NotificacionesViewModel(
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        NotificacionesViewModel(
             notificacionDao = notificacionDao,
             alertaDao       = alertaDao,
+            usuarioDao      = usuarioDao,
             sessionManager  = sessionManager
         ) as T
-    }
 }

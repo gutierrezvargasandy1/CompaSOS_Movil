@@ -11,6 +11,6 @@ interface AudioDao {
     @Insert
     suspend fun insertar(audio: AudioEntity)
 
-    @Query("SELECT * FROM audios WHERE alertaId = :alertaId")
+    @Query("SELECT * FROM audios WHERE alertaId = :alertaId ORDER BY fecha DESC")
     suspend fun obtenerPorAlerta(alertaId: String): List<AudioEntity>
 }
