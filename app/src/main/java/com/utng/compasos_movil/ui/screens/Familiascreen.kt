@@ -27,9 +27,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.utng.compasos_movil.FamiliaModule.FamiliaViewModel
 import com.utng.compasos_movil.FamiliaModule.FamiliaViewModelFactory
+import com.utng.compasos_movil.dao.MiembroConDatos
 import com.utng.compasos_movil.data.dao.FamiliaDao
 import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
-import com.utng.compasos_movil.data.dao.MiembroConDatos
 import com.utng.compasos_movil.data.dao.UsuarioDao
 import com.utng.compasos_movil.data.entity.FamiliaEntity
 import com.utng.compasos_movil.data.entity.UsuarioEntity
@@ -229,7 +229,9 @@ private fun FamiliaCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Group, null, tint = CompaSOSColors.AccentBlue, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Group, null,
+                    tint = CompaSOSColors.AccentBlue,
+                    modifier = Modifier.size(20.dp))
                 Text(
                     text = familia.nombre ?: "Sin nombre",
                     fontSize = 14.sp,
@@ -251,7 +253,10 @@ private fun FamiliaCard(
                 }
             }
 
-            Divider(color = CompaSOSColors.FieldBorder.copy(alpha = 0.2f), thickness = 0.5.dp)
+            Divider(
+                color = CompaSOSColors.FieldBorder.copy(alpha = 0.2f),
+                thickness = 0.5.dp
+            )
 
             if (miembros.isEmpty()) {
                 Text(
@@ -280,8 +285,10 @@ private fun FamiliaCard(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(1.dp)
                             ) {
+                                // ✅ los campos viven en miembro.usuario.*
                                 Text(
-                                    text = "${miembro.nombre} ${miembro.apellidoPaterno ?: ""}".trim(),
+                                    text = "${miembro.usuario.nombre} " +
+                                            "${miembro.usuario.apellidoPaterno ?: ""}".trim(),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = CompaSOSColors.TextPrimary
@@ -297,12 +304,22 @@ private fun FamiliaCard(
                 }
             }
 
-            Divider(color = CompaSOSColors.FieldBorder.copy(alpha = 0.2f), thickness = 0.5.dp)
+            Divider(
+                color = CompaSOSColors.FieldBorder.copy(alpha = 0.2f),
+                thickness = 0.5.dp
+            )
 
             TextButton(onClick = onInvitar, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.PersonAdd, null, tint = CompaSOSColors.AccentBlue, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.PersonAdd, null,
+                    tint = CompaSOSColors.AccentBlue,
+                    modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Invitar miembro", color = CompaSOSColors.AccentBlue, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text(
+                    text = "Invitar miembro",
+                    color = CompaSOSColors.AccentBlue,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
             }
         }
     }

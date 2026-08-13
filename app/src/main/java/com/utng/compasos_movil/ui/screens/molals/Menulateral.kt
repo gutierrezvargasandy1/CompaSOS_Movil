@@ -48,7 +48,9 @@ private val opcionesPrincipales = listOf(
     MenuOpcion("Familia", Icons.Filled.FamilyRestroom),
     MenuOpcion("Dispositivos", Icons.Filled.PhoneAndroid),
     MenuOpcion("Historial de ubicaciones", Icons.Filled.History),
-    MenuOpcion("Notificaciones", Icons.Filled.Notifications)
+    MenuOpcion("Notificaciones", Icons.Filled.Notifications),
+    MenuOpcion("Alertas de familiares",   Icons.Filled.NotificationImportant)
+
 )
 
 private val opcionesSecundarias = listOf(

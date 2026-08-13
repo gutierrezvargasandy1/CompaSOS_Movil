@@ -93,6 +93,8 @@ dependencies {
     // En el bloque dependencies:
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+
 
 
 
