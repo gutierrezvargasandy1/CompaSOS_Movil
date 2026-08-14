@@ -95,35 +95,37 @@ git clone -b dev https://github.com/gutierrezvargasandy1/CompaSOS_Movil.git
 
 ## Inicio de sesión
 
-<img width="1220" height="2712" alt="image" src="https://github.com/user-attachments/assets/f8d96141-0763-43aa-aeed-d37c0fd17e42" />
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/f8d96141-0763-43aa-aeed-d37c0fd17e42" />
 
 
 ---
 
 ## Registro de usuario
 
-<img width="610" height="1356" alt="image" src="https://github.com/user-attachments/assets/94db63ae-921d-4ec2-b580-6e07157aa831" />
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/94db63ae-921d-4ec2-b580-6e07157aa831" />
 
 
 ---
 
 ## Alarma de emergencia
 
-<img width="610" height="1356" alt="image" src="https://github.com/user-attachments/assets/49470c80-2d4e-4aeb-a2c3-a7cddd41c73b" />
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/49470c80-2d4e-4aeb-a2c3-a7cddd41c73b" />
 
 
 ---
 
 ## Detalle de cuenta en aplicación
 
-![Uploading image.png…]()
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/5c552515-56f1-49a7-8f17-659b7e9508dd" />
+
 
 
 ---
 
 ## Dispositivos vinculados
 
-![Uploading image.png…]()
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/de4ff045-91c3-42bd-b103-04367171ead4" />
+
 
 
 ---
