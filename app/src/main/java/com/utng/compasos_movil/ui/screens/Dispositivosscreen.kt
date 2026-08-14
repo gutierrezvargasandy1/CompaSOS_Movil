@@ -87,6 +87,13 @@ fun DispositivosScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { navController.navigate(com.utng.compasos_movil.navigation.Screen.VincularTv.route) }) {
+                        Icon(
+                            Icons.Filled.Tv,
+                            contentDescription = "Vincular pantalla TV",
+                            tint = CompaSOSColors.AccentBlue
+                        )
+                    }
                     IconButton(onClick = { viewModel.iniciarVinculacion() }) {
                         Icon(
                             Icons.Filled.Add,

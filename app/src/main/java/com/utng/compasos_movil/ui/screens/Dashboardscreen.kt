@@ -94,6 +94,7 @@ class DashboardViewModel(
         notificacionDao = db.notificacionDao(),
         familiaUsuarioDao = db.familiaUsuarioDao(),
         sessionManager = sessionManager,
+        dispositivoDao = db.dispositivoDao(),
         context = application
     )
 

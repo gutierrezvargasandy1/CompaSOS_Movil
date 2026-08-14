@@ -61,6 +61,7 @@ fun AppNavigation(
     historialUbicacionDao: HistorialUbicacionDao,
     ubicacionDao:          UbicacionDao,
     context:               Context,
+
     initialRoute:          String? = null
 ) {
     val navController = rememberNavController()
@@ -144,6 +145,15 @@ fun AppNavigation(
                         popUpTo(0) { inclusive = true }
                     }
                 }
+            )
+        }
+
+        composable(Screen.VincularTv.route) {
+            VincularTvScreen(
+                navController = navController,
+                usuarioDao    = usuarioDao,
+                dispositivoDao = dispositivoDao,
+                familiaUsuarioDao = familiaUsuarioDao
             )
         }
 

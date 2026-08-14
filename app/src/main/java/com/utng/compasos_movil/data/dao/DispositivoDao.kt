@@ -23,4 +23,12 @@ interface DispositivoDao {
     // Actualiza batería y estado de conexión cuando llega un mensaje MQTT de estado
     @Query("UPDATE dispositivos SET bateria = :bateria, conectado = :conectado WHERE id = :id")
     suspend fun actualizarEstado(id: String, bateria: Int?, conectado: Boolean)
+
+    @Query("""
+    SELECT * FROM dispositivos
+    WHERE tipo = 'tv'
+      AND usuarioId = :userId
+      AND conectado = 1
+""")
+    suspend fun obtenerTvsVinculados(userId: String): List<DispositivoEntity>
 }

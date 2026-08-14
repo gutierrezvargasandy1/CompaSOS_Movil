@@ -5,9 +5,10 @@ import android.util.Log
 import com.utng.compasos_movil.config.MqttConfig
 import com.utng.compasos_movil.config.MqttManager
 import com.utng.compasos_movil.data.LocationRepository
-import com.utng.compasos_movil.data.UbicacionActual          // ← nuevo import
+import com.utng.compasos_movil.data.UbicacionActual
 import com.utng.compasos_movil.data.dao.AlertaDao
 import com.utng.compasos_movil.data.dao.AudioDao
+import com.utng.compasos_movil.data.dao.DispositivoDao
 import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
 import com.utng.compasos_movil.data.dao.NotificacionDao
 import com.utng.compasos_movil.data.dao.UbicacionDao
@@ -16,10 +17,11 @@ import com.utng.compasos_movil.data.entity.AudioEntity
 import com.utng.compasos_movil.data.entity.NotificacionEntity
 import com.utng.compasos_movil.data.entity.UbicacionEntity
 import com.utng.compasos_movil.utils.SessionManager
-import kotlinx.coroutines.CoroutineScope                     // ← nuevo import
+import com.utng.compasos_movil.utils.TvMqttPublisher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.catch                         // ← nuevo import
-import kotlinx.coroutines.launch                             // ← nuevo import
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -31,6 +33,7 @@ class AlertaPhoneRepository(
     private val audioDao:          AudioDao,
     private val notificacionDao:   NotificacionDao,
     private val familiaUsuarioDao: FamiliaUsuarioDao,
+    private val dispositivoDao:    DispositivoDao,   // ← NUEVO
     private val sessionManager:    SessionManager,
     private val context:           Context
 ) {
@@ -40,10 +43,6 @@ class AlertaPhoneRepository(
 
     // ── SOS ──────────────────────────────────────────────────────────────────
 
-    /**
-     * El reloj actúa como control remoto: solo manda el trigger.
-     * El teléfono es dueño de la ubicación: la obtiene y la guarda él mismo.
-     */
     suspend fun procesarSOS(payloadJson: String): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
             val json      = JSONObject(payloadJson)
@@ -66,7 +65,6 @@ class AlertaPhoneRepository(
             alertaDao.insertar(alerta)
             Log.d("AlertaPhoneRepo", "Alerta guardada en Room: $alertaId")
 
-            // El teléfono obtiene su propia ubicación inicial
             val ubicacion = locationRepo.obtenerUltimaUbicacion()
             if (ubicacion != null) {
                 ubicacionDao.insertar(
@@ -83,6 +81,7 @@ class AlertaPhoneRepository(
             }
 
             notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
             alerta
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error procesando SOS: ${e.message}")
@@ -141,21 +140,49 @@ class AlertaPhoneRepository(
         }
     }
 
-    // ── Rastreo continuo de ubicación (nuevo) ─────────────────────────────────
+    // ── NUEVO: Notificación a TVs vinculadas ──────────────────────────────────
 
-    /**
-     * Arranca el Flow de ubicación en vivo del teléfono.
-     * - Cada punto se guarda en Room.
-     * - Cada 3 actualizaciones (~15 s) se publica a todos los familiares.
-     * El scope viene del servicio → se cancela automáticamente cuando el servicio muere.
-     */
+    private suspend fun notificarTvs(
+        alerta:    AlertaEntity,
+        usuarioId: String,
+        latitud:   Double?,
+        longitud:  Double?
+    ) {
+        try {
+            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
+            if (tvs.isEmpty()) return
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            val nombre = sessionManager.obtenerUsuarioNombre() ?: ""
+
+            for (tv in tvs) {
+                TvMqttPublisher.enviarAlertaATv(
+                    mqtt         = mqtt,
+                    tvId         = tv.id,
+                    alertaId     = alerta.id,
+                    tipoAlerta   = alerta.tipoAlerta   ?: "SOS",                  // ← fix
+                    descripcion  = alerta.descripcion ?: "Alerta de emergencia",
+                    emisorNombre = nombre,
+                    emisorId     = usuarioId,
+                    latitud      = latitud,
+                    longitud     = longitud
+                )
+                Log.d("AlertaPhoneRepo", "Alerta enviada a TV: ${tv.id} (${tv.modelo})")
+            }
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error notificando TVs: ${e.message}")
+        }
+    }
+
+    // ── Rastreo continuo de ubicación ─────────────────────────────────────────
+
     fun iniciarRastreoEnVivo(alertaId: String, scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             var contador = 0
             locationRepo.ubicacionEnVivo()
                 .catch { e -> Log.e("AlertaPhoneRepo", "Error en rastreo: ${e.message}") }
                 .collect { ubicacion ->
-                    // Guardar cada punto en Room
                     ubicacionDao.insertar(
                         UbicacionEntity(
                             id        = UUID.randomUUID().toString(),
@@ -167,9 +194,9 @@ class AlertaPhoneRepository(
                             fecha     = fmt.format(Date())
                         )
                     )
-                    // Publicar a familiares cada 3 actualizaciones
                     if (++contador % 3 == 0) {
                         publicarUbicacionAFamiliares(alertaId, ubicacion)
+                        publicarUbicacionATvs(ubicacion) // ← NUEVO
                     }
                 }
         }
@@ -206,6 +233,30 @@ class AlertaPhoneRepository(
         }
     }
 
+    // ← NUEVO: publica ubicación del dueño del SOS a cada TV vinculada
+    private suspend fun publicarUbicacionATvs(ubicacion: UbicacionActual) {
+        try {
+            val usuarioId = sessionManager.obtenerUsuarioId() ?: return
+            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
+            if (tvs.isEmpty()) return
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            for (tv in tvs) {
+                TvMqttPublisher.enviarUbicacionATv(
+                    mqtt      = mqtt,
+                    tvId      = tv.id,
+                    usuarioId = usuarioId,
+                    latitud   = ubicacion.latitud,
+                    longitud  = ubicacion.longitud
+                )
+            }
+            Log.d("AlertaPhoneRepo", "Ubicación en vivo enviada a ${tvs.size} TV(s)")
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error publicando ubicación a TVs: ${e.message}")
+        }
+    }
+
     // ── Audio del reloj ───────────────────────────────────────────────────────
 
     suspend fun procesarAudio(payloadJson: String) = withContext(Dispatchers.IO) {
@@ -236,7 +287,6 @@ class AlertaPhoneRepository(
                     UUID.randomUUID().toString()
                 }
 
-                // Evitar duplicados
                 alertaDao.obtenerPorId(alertaId)?.let { return@withContext it }
 
                 val alerta = AlertaEntity(
@@ -250,19 +300,17 @@ class AlertaPhoneRepository(
                 )
                 alertaDao.insertar(alerta)
 
-                // ← NUEVO: registra que ESTE usuario recibió la alerta
                 notificacionDao.insertar(
                     NotificacionEntity(
                         id           = UUID.randomUUID().toString(),
                         alertaId     = alertaId,
-                        destinatario = usuarioId,   // yo soy quien la recibe
+                        destinatario = usuarioId,
                         tipo         = "recibida",
                         estado       = "recibida",
                         fecha        = fmt.format(Date())
                     )
                 )
 
-                // Guarda la ubicación si viene incluida
                 val lat = json.optDouble("latitud")
                 val lng = json.optDouble("longitud")
                 if (!lat.isNaN() && !lng.isNaN()) {
@@ -285,12 +333,6 @@ class AlertaPhoneRepository(
             }
         }
 
-    // Al final de AlertaPhoneRepository.kt, antes del último "}"
-
-    /**
-     * Guarda la ubicación en vivo que publica el teléfono del afectado
-     * y recibe el teléfono del familiar suscrito.
-     */
     suspend fun procesarUbicacionFamiliar(payloadJson: String) = withContext(Dispatchers.IO) {
         try {
             val json     = JSONObject(payloadJson)
@@ -318,11 +360,6 @@ class AlertaPhoneRepository(
         }
     }
 
-
-    /**
-     * Crea una alerta SOS directamente desde el teléfono.
-     * Mismo flujo que procesarSOS() pero sin necesitar payload MQTT externo.
-     */
     suspend fun crearSOSDesdeMovil(): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
             val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
@@ -342,7 +379,6 @@ class AlertaPhoneRepository(
                 fecha         = fmt.format(Date())
             )
             alertaDao.insertar(alerta)
-            Log.d("AlertaPhoneRepo", "SOS desde móvil creado: $alertaId")
 
             val ubicacion = locationRepo.obtenerUltimaUbicacion()
             if (ubicacion != null) {
@@ -359,6 +395,7 @@ class AlertaPhoneRepository(
                 )
             }
             notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
             alerta
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error en crearSOSDesdeMovil: ${e.message}")
