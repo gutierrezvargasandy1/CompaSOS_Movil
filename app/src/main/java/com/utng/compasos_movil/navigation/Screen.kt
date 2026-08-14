@@ -15,6 +15,7 @@ sealed class Screen(val route: String) {
     object EditarPerfil         : Screen("editar_perfil")
 
     object AlertasRecibidas : Screen("alertas_recibidas")
+    object VincularTv : Screen("vincular_tv")
 
     // ← nuevo: pantalla detalle de alerta (desde notificación o lista)
     object AlertaDetalle : Screen("alertaDetalle/{alertaId}") {

@@ -22,7 +22,6 @@ class AlertaMqttService : Service() {
     private lateinit var repository:     AlertaPhoneRepository
     private lateinit var sessionManager: SessionManager
 
-    // ← userId que queremos suscribir; puede llegar antes o después de conectar
     @Volatile private var familiarUserId: String? = null
 
     companion object {
@@ -31,11 +30,6 @@ class AlertaMqttService : Service() {
         private const val NOTIF_SVC_ID = 9001
         private const val EXTRA_USER   = "usuario_id"
 
-        /**
-         * Llamar siempre con userId:
-         *   - En MainActivity si el usuario ya tiene sesión activa.
-         *   - En AuthViewModel justo después de un login exitoso.
-         */
         fun iniciar(context: Context, userId: String? = null) {
             val intent = Intent(context, AlertaMqttService::class.java).apply {
                 userId?.let { putExtra(EXTRA_USER, it) }
@@ -46,8 +40,6 @@ class AlertaMqttService : Service() {
                 context.startService(intent)
         }
     }
-
-    // ── Ciclo de vida ─────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
@@ -68,22 +60,16 @@ class AlertaMqttService : Service() {
         conectarYSuscribir()
     }
 
-    /**
-     * Se llama cada vez que alguien invoca AlertaMqttService.iniciar().
-     * Aprovechamos para recibir el userId y suscribir si el cliente ya conectó.
-     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val userId = intent?.getStringExtra(EXTRA_USER)
-            ?: sessionManager.obtenerUsuarioId()   // fallback: leer de la sesión actual
+            ?: sessionManager.obtenerUsuarioId()
 
         if (userId != null && userId != familiarUserId) {
             familiarUserId = userId
             Log.d("AlertaMqttSvc", "onStartCommand → userId: $userId")
-            // Si el cliente ya está conectado, suscribir ahora mismo
             if (mqttClient?.isConnected == true) {
                 scope.launch { suscribirFamiliar(userId) }
             }
-            // Si aún no conectó, conectarYSuscribir() usará familiarUserId al terminar
         }
         return START_STICKY
     }
@@ -106,6 +92,7 @@ class AlertaMqttService : Service() {
             audioDao          = db.audioDao(),
             notificacionDao   = db.notificacionDao(),
             familiaUsuarioDao = db.familiaUsuarioDao(),
+            dispositivoDao    = db.dispositivoDao(),   // ← NUEVO
             sessionManager    = sessionManager,
             context           = applicationContext
         )
@@ -129,7 +116,7 @@ class AlertaMqttService : Service() {
                 }
                 Log.d("AlertaMqttSvc", "Conectado al broker")
 
-                // Topics del reloj
+                // El reloj — no se toca
                 mqttClient!!.subscribe("${MqttConfig.TOPIC_ALERTA}/+/sos", 1) { _, msg ->
                     scope.launch { manejarSOS(String(msg.payload, Charsets.UTF_8)) }
                 }
@@ -139,8 +126,6 @@ class AlertaMqttService : Service() {
                     }
                 }
 
-                // ── Topics familiares ─────────────────────────────────────────
-                // Intentar con familiarUserId ya guardado, o leer de sesión ahora
                 val userId = familiarUserId ?: sessionManager.obtenerUsuarioId()
                 if (userId != null) {
                     familiarUserId = userId
@@ -156,7 +141,6 @@ class AlertaMqttService : Service() {
         }
     }
 
-    /** Suscribe los dos topics del familiar. Seguro llamarlo varias veces. */
     private suspend fun suscribirFamiliar(userId: String) {
         try {
             val topicAlerta    = "${MqttConfig.TOPIC_FAMILIA}/$userId/alerta"
@@ -181,6 +165,7 @@ class AlertaMqttService : Service() {
     private suspend fun manejarSOS(payloadJson: String) {
         Log.d("AlertaMqttSvc", "SOS recibido: $payloadJson")
         val alerta = repository.procesarSOS(payloadJson) ?: return
+        // procesarSOS() ya se encarga de notificarFamiliares() y notificarTvs()
         repository.iniciarRastreoEnVivo(alerta.id, scope)
         mostrarNotifSOS(
             alertaId    = alerta.id,
