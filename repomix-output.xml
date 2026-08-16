@@ -210,387 +210,12 @@ build.gradle.kts
 gradle.properties
 gradlew
 gradlew.bat
+README.md
 settings.gradle.kts
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="app/src/main/java/com/utng/compasos_movil/TvVinculacionModule/TvVinculacionViewModel.kt">
-package com.utng.compasos_movil.TvVinculacionModule
-
-import android.util.Log
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
-import com.utng.compasos_movil.config.MqttConfig
-import com.utng.compasos_movil.config.MqttManager
-import com.utng.compasos_movil.data.dao.DispositivoDao
-import com.utng.compasos_movil.data.dao.UsuarioDao
-import com.utng.compasos_movil.data.entity.DispositivoEntity
-import com.utng.compasos_movil.utils.SessionManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
-
-sealed class EstadoVinculacionTv {
-    object Inactivo : EstadoVinculacionTv()
-    data class Generando(val codigo: String) : EstadoVinculacionTv()
-    data class Exitosa(val modeloTv: String) : EstadoVinculacionTv()
-    data class Error(val mensaje: String) : EstadoVinculacionTv()
-}
-
-class TvVinculacionViewModel(
-    private val usuarioDao: UsuarioDao,
-    private val dispositivoDao: DispositivoDao,
-    private val sessionManager: SessionManager
-) : ViewModel() {
-
-    companion object { private const val TAG = "TvVinculacionVM" }
-
-    private val mqtt = MqttManager()
-    private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-
-    private val _estado = MutableStateFlow<EstadoVinculacionTv>(EstadoVinculacionTv.Inactivo)
-    val estado: StateFlow<EstadoVinculacionTv> = _estado.asStateFlow()
-
-    private var codigoActivo: String? = null
-
-    fun iniciarVinculacion() {
-        val codigo = generarCodigo()
-        codigoActivo = codigo
-        _estado.value = EstadoVinculacionTv.Generando(codigo)
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                if (!mqtt.estaConectado) mqtt.conectar()
-
-                val topicSolicitud = "${MqttConfig.TOPIC_VINCULACION}/tv/$codigo/solicitud"
-                mqtt.suscribir(topicSolicitud) { _, payload ->
-                    viewModelScope.launch(Dispatchers.IO) {
-                        procesarSolicitudTv(payload, codigo)
-                    }
-                }
-                Log.d(TAG, "Esperando solicitud de la TV con código: $codigo")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar vinculación TV: ${e.message}")
-                _estado.value = EstadoVinculacionTv.Error("Sin conexión al servidor MQTT")
-            }
-        }
-    }
-
-    private suspend fun procesarSolicitudTv(payload: String, codigoEsperado: String) {
-        if (codigoActivo != codigoEsperado) return
-        try {
-            val json = JSONObject(payload)
-            val modelo = json.optString("modelo", "Android TV")
-            // La TV manda "tvId" en el payload de solicitud
-            val idTv = json.optString("tvId", json.optString("dispositivoId", "tv_${UUID.randomUUID()}"))
-
-            val userId = sessionManager.obtenerUsuarioId() ?: run {
-                _estado.update { EstadoVinculacionTv.Error("Sin sesión activa") }
-                return
-            }
-            val usuario = usuarioDao.obtenerPorId(userId)
-            val nombre = usuario?.nombre ?: sessionManager.obtenerUsuarioNombre() ?: ""
-            val email = usuario?.correo ?: sessionManager.obtenerUsuarioEmail() ?: ""
-
-            // 1. Responder a la TV por el topic de vinculación
-            val respuestaVinculacion = JSONObject().apply {
-                put("usuarioId", userId)
-                put("nombre", nombre)
-                put("email", email)
-            }.toString()
-
-            mqtt.publicar("${MqttConfig.TOPIC_VINCULACION}/tv/$codigoEsperado/respuesta", respuestaVinculacion)
-
-            // 2. Guardar la TV en Room
-            val nuevoDispositivo = DispositivoEntity(
-                id = idTv,
-                usuarioId = userId,
-                tipo = "tv",
-                modelo = modelo,
-                fabricante = json.optString("fabricante", null),
-                numeroSerie = json.optString("numeroSerie", null),
-                tokenFcm = null,
-                bateria = null,
-                conectado = true,
-                fechaVinculacion = fmt.format(Date())
-            )
-            dispositivoDao.insertar(nuevoDispositivo)
-
-            // 3. Enviar evento de Sesión inicial a la TV (compasos/tv/{tvId}/sesion)
-            val payloadSesion = JSONObject().apply {
-                put("usuarioId", userId)
-                put("nombre", nombre)
-                put("email", email)
-                put("familiares", JSONArray()) // Lista inicial de familiares
-            }.toString()
-
-            mqtt.publicar("${MqttConfig.TOPIC_TV}/$idTv/sesion", payloadSesion)
-            Log.d(TAG, "Sesión enviada a la TV: $idTv")
-
-            // 4. Actualizar estado de UI
-            _estado.update { EstadoVinculacionTv.Exitosa(modelo) }
-            Log.d(TAG, "✅ TV vinculada correctamente: $modelo")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error procesando solicitud de TV: ${e.message}")
-            _estado.update { EstadoVinculacionTv.Error("Error al procesar la solicitud de la TV") }
-        }
-    }
-
-    fun reiniciar() {
-        codigoActivo = null
-        _estado.value = EstadoVinculacionTv.Inactivo
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        viewModelScope.launch(Dispatchers.IO) { mqtt.desconectar() }
-    }
-
-    private fun generarCodigo(): String {
-        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return (1..6).map { chars.random() }.joinToString("")
-    }
-}
-
-class TvVinculacionViewModelFactory(
-    private val usuarioDao: UsuarioDao,
-    private val dispositivoDao: DispositivoDao,
-    private val sessionManager: SessionManager
-) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        @Suppress("UNCHECKED_CAST")
-        return TvVinculacionViewModel(usuarioDao, dispositivoDao, sessionManager) as T
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/VincularTvScreen.kt">
-package com.utng.compasos_movil.ui.screens
-
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
-import com.utng.compasos_movil.TvVinculacionModule.EstadoVinculacionTv
-import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModel
-import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModelFactory
-import com.utng.compasos_movil.data.dao.DispositivoDao
-import com.utng.compasos_movil.data.dao.UsuarioDao
-import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
-import com.utng.compasos_movil.ui.theme.CompaSOSColors
-import com.utng.compasos_movil.utils.SessionManager
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun VincularTvScreen(
-    navController: NavController,
-    usuarioDao: UsuarioDao,
-    dispositivoDao: DispositivoDao,
-) {
-    val context = LocalContext.current
-    val viewModel: TvVinculacionViewModel = viewModel(
-        factory = TvVinculacionViewModelFactory(
-            usuarioDao     = usuarioDao,
-            dispositivoDao = dispositivoDao,
-            sessionManager = SessionManager(context)
-        )
-    )
-    val estado by viewModel.estado.collectAsState()
-
-    BackHandler(enabled = true) { navController.popBackStack() }
-
-    LaunchedEffect(Unit) {
-        if (estado is EstadoVinculacionTv.Inactivo) viewModel.iniciarVinculacion()
-    }
-
-    Scaffold(
-        containerColor = CompaSOSColors.Background,
-        topBar = {
-            TopAppBar(
-                title = { Text("Vincular pantalla TV", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Regresar", tint = CompaSOSColors.IconTint)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CompaSOSColors.Background)
-            )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier.fillMaxSize().background(CompaSOSColors.Background).padding(padding),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(20.dp)
-            ) {
-                Icon(Icons.Filled.Tv, contentDescription = null, tint = CompaSOSColors.AccentBlue, modifier = Modifier.size(48.dp))
-
-                when (val e = estado) {
-                    is EstadoVinculacionTv.Generando -> {
-                        Text(
-                            "Escribe este código en tu pantalla CompaSOS TV",
-                            color = CompaSOSColors.TextSecondary,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
-                            color = CompaSOSColors.FieldBackground
-                        ) {
-                            Text(
-                                text = e.codigo.chunked(3).joinToString("  "),
-                                fontSize = 44.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontFamily = FontFamily.Monospace,
-                                color = CompaSOSColors.AccentBlue,
-                                textAlign = TextAlign.Center,
-                                letterSpacing = 4.sp,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
-                            )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = CompaSOSColors.AccentBlue
-                            )
-                            Text("Esperando a la TV...", fontSize = 12.sp, color = CompaSOSColors.TextSecondary)
-                        }
-                    }
-
-                    is EstadoVinculacionTv.Exitosa -> {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(56.dp))
-                        Text("¡TV vinculada correctamente!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CompaSOSColors.TextPrimary, textAlign = TextAlign.Center)
-                        Text(e.modeloTv, fontSize = 14.sp, color = CompaSOSColors.AccentBlue)
-                        Button(
-                            onClick = { navController.popBackStack() },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
-                            colors = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue)
-                        ) {
-                            Text("Listo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    is EstadoVinculacionTv.Error -> {
-                        Icon(Icons.Filled.Error, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(56.dp))
-                        Text(e.mensaje, fontSize = 13.sp, color = CompaSOSColors.TextSecondary, textAlign = TextAlign.Center)
-                        Button(
-                            onClick = { viewModel.iniciarVinculacion() },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
-                            colors = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue)
-                        ) {
-                            Text("Reintentar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    else -> CircularProgressIndicator(color = CompaSOSColors.AccentBlue)
-                }
-            }
-        }
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/utng/compasos_movil/utils/TvMqttPublisher.kt">
-package com.utng.compasos_movil.utils
-
-import com.utng.compasos_movil.config.MqttConfig
-import com.utng.compasos_movil.config.MqttManager
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
-
-object TvMqttPublisher {
-
-    private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-
-    /**
-     * Envía una alerta de emergencia a una TV vinculada
-     * Topic: compasos/tv/{tvId}/alerta
-     */
-    fun enviarAlertaATv(
-        mqtt: MqttManager,
-        tvId: String,
-        alertaId: String = UUID.randomUUID().toString(),
-        tipoAlerta: String,
-        descripcion: String,
-        emisorNombre: String,
-        emisorId: String,
-        latitud: Double?,
-        longitud: Double?
-    ) {
-        val payload = JSONObject().apply {
-            put("alertaId", alertaId)
-            put("tipoAlerta", tipoAlerta)
-            put("descripcion", descripcion)
-            put("emisorNombre", emisorNombre)
-            put("emisorId", emisorId)
-            latitud?.let { put("latitud", it) }
-            longitud?.let { put("longitud", it) }
-            put("fecha", fmt.format(Date()))
-        }.toString()
-
-        mqtt.publicar("${MqttConfig.TOPIC_TV}/$tvId/alerta", payload)
-    }
-
-    /**
-     * Envía la ubicación en vivo de un familiar a la TV vinculada
-     * Topic: compasos/tv/{tvId}/ubicacion
-     */
-    fun enviarUbicacionATv(
-        mqtt: MqttManager,
-        tvId: String,
-        usuarioId: String,
-        latitud: Double,
-        longitud: Double
-    ) {
-        val payload = JSONObject().apply {
-            put("usuarioId", usuarioId)
-            put("latitud", latitud)
-            put("longitud", longitud)
-            put("fecha", fmt.format(Date()))
-        }.toString()
-
-        mqtt.publicar("${MqttConfig.TOPIC_TV}/$tvId/ubicacion", payload)
-    }
-}
-</file>
 
 <file path="app/src/androidTest/java/com/utng/compasos_movil/ExampleInstrumentedTest.kt">
 package com.utng.compasos_movil
@@ -615,377 +240,6 @@ class ExampleInstrumentedTest {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("com.utng.compasos_movil", appContext.packageName)
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/utng/compasos_movil/AlertaPhoneRepository/AlertaPhoneRepository.kt">
-package com.utng.compasos_movil.AlertaPhoneRepository
-
-import android.content.Context
-import android.util.Log
-import com.utng.compasos_movil.config.MqttConfig
-import com.utng.compasos_movil.config.MqttManager
-import com.utng.compasos_movil.data.LocationRepository
-import com.utng.compasos_movil.data.UbicacionActual          // ← nuevo import
-import com.utng.compasos_movil.data.dao.AlertaDao
-import com.utng.compasos_movil.data.dao.AudioDao
-import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
-import com.utng.compasos_movil.data.dao.NotificacionDao
-import com.utng.compasos_movil.data.dao.UbicacionDao
-import com.utng.compasos_movil.data.entity.AlertaEntity
-import com.utng.compasos_movil.data.entity.AudioEntity
-import com.utng.compasos_movil.data.entity.NotificacionEntity
-import com.utng.compasos_movil.data.entity.UbicacionEntity
-import com.utng.compasos_movil.utils.SessionManager
-import kotlinx.coroutines.CoroutineScope                     // ← nuevo import
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.catch                         // ← nuevo import
-import kotlinx.coroutines.launch                             // ← nuevo import
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
-
-class AlertaPhoneRepository(
-    private val alertaDao:         AlertaDao,
-    private val ubicacionDao:      UbicacionDao,
-    private val audioDao:          AudioDao,
-    private val notificacionDao:   NotificacionDao,
-    private val familiaUsuarioDao: FamiliaUsuarioDao,
-    private val sessionManager:    SessionManager,
-    private val context:           Context
-) {
-    private val mqtt         = MqttManager()
-    private val locationRepo = LocationRepository(context)
-    private val fmt          = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-
-    // ── SOS ──────────────────────────────────────────────────────────────────
-
-    /**
-     * El reloj actúa como control remoto: solo manda el trigger.
-     * El teléfono es dueño de la ubicación: la obtiene y la guarda él mismo.
-     */
-    suspend fun procesarSOS(payloadJson: String): AlertaEntity? = withContext(Dispatchers.IO) {
-        try {
-            val json      = JSONObject(payloadJson)
-            val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
-                Log.e("AlertaPhoneRepo", "No hay sesión activa")
-                return@withContext null
-            }
-
-            val alertaId = json.optString("alertaId").ifBlank { UUID.randomUUID().toString() }
-
-            val alerta = AlertaEntity(
-                id            = alertaId,
-                usuarioId     = usuarioId,
-                dispositivoId = json.optString("dispositivoId", "desconocido"),
-                tipoAlerta    = json.optString("tipoAlerta",    "SOS"),
-                descripcion   = json.optString("descripcion",   "Alerta de pánico"),
-                estado        = "activa",
-                fecha         = json.optString("fecha", fmt.format(Date()))
-            )
-            alertaDao.insertar(alerta)
-            Log.d("AlertaPhoneRepo", "Alerta guardada en Room: $alertaId")
-
-            // El teléfono obtiene su propia ubicación inicial
-            val ubicacion = locationRepo.obtenerUltimaUbicacion()
-            if (ubicacion != null) {
-                ubicacionDao.insertar(
-                    UbicacionEntity(
-                        id        = UUID.randomUUID().toString(),
-                        alertaId  = alertaId,
-                        latitud   = ubicacion.latitud,
-                        longitud  = ubicacion.longitud,
-                        precision = null,
-                        velocidad = null,
-                        fecha     = fmt.format(Date())
-                    )
-                )
-            }
-
-            notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
-            alerta
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error procesando SOS: ${e.message}")
-            null
-        }
-    }
-
-    // ── Notificación a familiares ─────────────────────────────────────────────
-
-    private suspend fun notificarFamiliares(
-        alerta:    AlertaEntity,
-        usuarioId: String,
-        latitud:   Double?,
-        longitud:  Double?
-    ) {
-        try {
-            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(usuarioId)
-            if (familiares.isEmpty()) {
-                Log.d("AlertaPhoneRepo", "Sin familiares registrados para notificar")
-                return
-            }
-            Log.d("AlertaPhoneRepo", "Notificando a ${familiares.size} familiar(es)")
-
-            if (!mqtt.estaConectado) mqtt.conectar()
-
-            val payloadBase = JSONObject().apply {
-                put("alertaId",      alerta.id)
-                put("dispositivoId", alerta.dispositivoId)
-                put("tipoAlerta",    alerta.tipoAlerta)
-                put("descripcion",   alerta.descripcion)
-                put("estado",        alerta.estado)
-                put("fecha",         alerta.fecha)
-                latitud?.let  { put("latitud",  it) }
-                longitud?.let { put("longitud", it) }
-            }.toString()
-
-            for (familiar in familiares) {
-                notificacionDao.insertar(
-                    NotificacionEntity(
-                        id           = UUID.randomUUID().toString(),
-                        alertaId     = alerta.id,
-                        destinatario = familiar.usuarioId,
-                        tipo         = "SOS",
-                        estado       = "enviada",
-                        fecha        = fmt.format(Date())
-                    )
-                )
-                mqtt.publicar(
-                    "${MqttConfig.TOPIC_FAMILIA}/${familiar.usuarioId}/alerta",
-                    payloadBase
-                )
-                Log.d("AlertaPhoneRepo", "Alerta enviada a familiar: ${familiar.usuarioId}")
-            }
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error notificando familiares: ${e.message}")
-        }
-    }
-
-    // ── Rastreo continuo de ubicación (nuevo) ─────────────────────────────────
-
-    /**
-     * Arranca el Flow de ubicación en vivo del teléfono.
-     * - Cada punto se guarda en Room.
-     * - Cada 3 actualizaciones (~15 s) se publica a todos los familiares.
-     * El scope viene del servicio → se cancela automáticamente cuando el servicio muere.
-     */
-    fun iniciarRastreoEnVivo(alertaId: String, scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            var contador = 0
-            locationRepo.ubicacionEnVivo()
-                .catch { e -> Log.e("AlertaPhoneRepo", "Error en rastreo: ${e.message}") }
-                .collect { ubicacion ->
-                    // Guardar cada punto en Room
-                    ubicacionDao.insertar(
-                        UbicacionEntity(
-                            id        = UUID.randomUUID().toString(),
-                            alertaId  = alertaId,
-                            latitud   = ubicacion.latitud,
-                            longitud  = ubicacion.longitud,
-                            precision = null,
-                            velocidad = null,
-                            fecha     = fmt.format(Date())
-                        )
-                    )
-                    // Publicar a familiares cada 3 actualizaciones
-                    if (++contador % 3 == 0) {
-                        publicarUbicacionAFamiliares(alertaId, ubicacion)
-                    }
-                }
-        }
-    }
-
-    private suspend fun publicarUbicacionAFamiliares(
-        alertaId: String,
-        ubicacion: UbicacionActual
-    ) {
-        try {
-            val usuarioId  = sessionManager.obtenerUsuarioId() ?: return
-            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(usuarioId)
-            if (familiares.isEmpty()) return
-
-            if (!mqtt.estaConectado) mqtt.conectar()
-
-            val payload = JSONObject().apply {
-                put("alertaId", alertaId)
-                put("tipo",     "ubicacion_viva")
-                put("latitud",  ubicacion.latitud)
-                put("longitud", ubicacion.longitud)
-                put("fecha",    fmt.format(Date()))
-            }.toString()
-
-            for (familiar in familiares) {
-                mqtt.publicar(
-                    "${MqttConfig.TOPIC_FAMILIA}/${familiar.usuarioId}/ubicacion",
-                    payload
-                )
-            }
-            Log.d("AlertaPhoneRepo", "Ubicación en vivo publicada a ${familiares.size} familiar(es)")
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error publicando ubicación a familiares: ${e.message}")
-        }
-    }
-
-    // ── Audio del reloj ───────────────────────────────────────────────────────
-
-    suspend fun procesarAudio(payloadJson: String) = withContext(Dispatchers.IO) {
-        try {
-            val json = JSONObject(payloadJson)
-            audioDao.insertar(
-                AudioEntity(
-                    id       = json.optString("id", UUID.randomUUID().toString()),
-                    alertaId = json.getString("alertaId"),
-                    urlAudio = json.optString("audio"),
-                    duracion = null,
-                    fecha    = json.optString("fecha", fmt.format(Date()))
-                )
-            )
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error procesando audio: ${e.message}")
-        }
-    }
-
-    // ── Alerta recibida como familiar ─────────────────────────────────────────
-
-    suspend fun procesarAlertaFamiliar(payloadJson: String): AlertaEntity? =
-        withContext(Dispatchers.IO) {
-            try {
-                val json      = JSONObject(payloadJson)
-                val usuarioId = sessionManager.obtenerUsuarioId() ?: return@withContext null
-                val alertaId  = json.optString("alertaId").ifBlank {
-                    UUID.randomUUID().toString()
-                }
-
-                // Evitar duplicados
-                alertaDao.obtenerPorId(alertaId)?.let { return@withContext it }
-
-                val alerta = AlertaEntity(
-                    id            = alertaId,
-                    usuarioId     = usuarioId,
-                    dispositivoId = json.optString("dispositivoId"),
-                    tipoAlerta    = json.optString("tipoAlerta", "SOS"),
-                    descripcion   = json.optString("descripcion"),
-                    estado        = json.optString("estado", "activa"),
-                    fecha         = json.optString("fecha", fmt.format(Date()))
-                )
-                alertaDao.insertar(alerta)
-
-                // ← NUEVO: registra que ESTE usuario recibió la alerta
-                notificacionDao.insertar(
-                    NotificacionEntity(
-                        id           = UUID.randomUUID().toString(),
-                        alertaId     = alertaId,
-                        destinatario = usuarioId,   // yo soy quien la recibe
-                        tipo         = "recibida",
-                        estado       = "recibida",
-                        fecha        = fmt.format(Date())
-                    )
-                )
-
-                // Guarda la ubicación si viene incluida
-                val lat = json.optDouble("latitud")
-                val lng = json.optDouble("longitud")
-                if (!lat.isNaN() && !lng.isNaN()) {
-                    ubicacionDao.insertar(
-                        UbicacionEntity(
-                            id        = UUID.randomUUID().toString(),
-                            alertaId  = alertaId,
-                            latitud   = lat,
-                            longitud  = lng,
-                            precision = null,
-                            velocidad = null,
-                            fecha     = fmt.format(Date())
-                        )
-                    )
-                }
-                alerta
-            } catch (e: Exception) {
-                Log.e("AlertaPhoneRepo", "Error procesando alerta de familiar: ${e.message}")
-                null
-            }
-        }
-
-    // Al final de AlertaPhoneRepository.kt, antes del último "}"
-
-    /**
-     * Guarda la ubicación en vivo que publica el teléfono del afectado
-     * y recibe el teléfono del familiar suscrito.
-     */
-    suspend fun procesarUbicacionFamiliar(payloadJson: String) = withContext(Dispatchers.IO) {
-        try {
-            val json     = JSONObject(payloadJson)
-            val alertaId = json.optString("alertaId")
-            if (alertaId.isBlank()) return@withContext
-
-            val lat = json.optDouble("latitud")
-            val lng = json.optDouble("longitud")
-            if (lat.isNaN() || lng.isNaN()) return@withContext
-
-            ubicacionDao.insertar(
-                UbicacionEntity(
-                    id        = UUID.randomUUID().toString(),
-                    alertaId  = alertaId,
-                    latitud   = lat,
-                    longitud  = lng,
-                    precision = null,
-                    velocidad = null,
-                    fecha     = json.optString("fecha", fmt.format(Date()))
-                )
-            )
-            Log.d("AlertaPhoneRepo", "Ubicación de familiar guardada para alerta: $alertaId")
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error procesando ubicación de familiar: ${e.message}")
-        }
-    }
-
-
-    /**
-     * Crea una alerta SOS directamente desde el teléfono.
-     * Mismo flujo que procesarSOS() pero sin necesitar payload MQTT externo.
-     */
-    suspend fun crearSOSDesdeMovil(): AlertaEntity? = withContext(Dispatchers.IO) {
-        try {
-            val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
-                Log.e("AlertaPhoneRepo", "crearSOSDesdeMovil: sin sesión activa")
-                return@withContext null
-            }
-            val alertaId      = UUID.randomUUID().toString()
-            val dispositivoId = "movil_$usuarioId"
-
-            val alerta = AlertaEntity(
-                id            = alertaId,
-                usuarioId     = usuarioId,
-                dispositivoId = dispositivoId,
-                tipoAlerta    = "SOS",
-                descripcion   = "Alerta de pánico desde el teléfono",
-                estado        = "activa",
-                fecha         = fmt.format(Date())
-            )
-            alertaDao.insertar(alerta)
-            Log.d("AlertaPhoneRepo", "SOS desde móvil creado: $alertaId")
-
-            val ubicacion = locationRepo.obtenerUltimaUbicacion()
-            if (ubicacion != null) {
-                ubicacionDao.insertar(
-                    UbicacionEntity(
-                        id        = UUID.randomUUID().toString(),
-                        alertaId  = alertaId,
-                        latitud   = ubicacion.latitud,
-                        longitud  = ubicacion.longitud,
-                        precision = null,
-                        velocidad = null,
-                        fecha     = fmt.format(Date())
-                    )
-                )
-            }
-            notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
-            alerta
-        } catch (e: Exception) {
-            Log.e("AlertaPhoneRepo", "Error en crearSOSDesdeMovil: ${e.message}")
-            null
-        }
     }
 }
 </file>
@@ -1256,264 +510,6 @@ class UsuarioRepository(
      */
     suspend fun desactivarUsuario(usuarioId: String) {
         eliminarUsuario(usuarioId)
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/utng/compasos_movil/config/AlertaMqttService.kt">
-package com.utng.compasos_movil.config
-
-import android.app.*
-import android.content.Context
-import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.os.Build
-import android.os.IBinder
-import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.utng.compasos_movil.AlertaPhoneRepository.AlertaPhoneRepository
-import com.utng.compasos_movil.data.AppDatabase
-import com.utng.compasos_movil.utils.SessionManager
-import kotlinx.coroutines.*
-import org.eclipse.paho.client.mqttv3.*
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
-
-class AlertaMqttService : Service() {
-
-    private val scope          = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var mqttClient:    MqttClient? = null
-    private lateinit var repository:     AlertaPhoneRepository
-    private lateinit var sessionManager: SessionManager
-
-    // ← userId que queremos suscribir; puede llegar antes o después de conectar
-    @Volatile private var familiarUserId: String? = null
-
-    companion object {
-        private const val CANAL_SVC    = "compasos_svc"
-        private const val CANAL_SOS    = "compasos_sos"
-        private const val NOTIF_SVC_ID = 9001
-        private const val EXTRA_USER   = "usuario_id"
-
-        /**
-         * Llamar siempre con userId:
-         *   - En MainActivity si el usuario ya tiene sesión activa.
-         *   - En AuthViewModel justo después de un login exitoso.
-         */
-        fun iniciar(context: Context, userId: String? = null) {
-            val intent = Intent(context, AlertaMqttService::class.java).apply {
-                userId?.let { putExtra(EXTRA_USER, it) }
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                context.startForegroundService(intent)
-            else
-                context.startService(intent)
-        }
-    }
-
-    // ── Ciclo de vida ─────────────────────────────────────────────────────────
-
-    override fun onCreate() {
-        super.onCreate()
-        sessionManager = SessionManager(applicationContext)
-        crearCanales()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIF_SVC_ID, notifServicio(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIF_SVC_ID, notifServicio())
-        }
-
-        inicializarRepo()
-        conectarYSuscribir()
-    }
-
-    /**
-     * Se llama cada vez que alguien invoca AlertaMqttService.iniciar().
-     * Aprovechamos para recibir el userId y suscribir si el cliente ya conectó.
-     */
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val userId = intent?.getStringExtra(EXTRA_USER)
-            ?: sessionManager.obtenerUsuarioId()   // fallback: leer de la sesión actual
-
-        if (userId != null && userId != familiarUserId) {
-            familiarUserId = userId
-            Log.d("AlertaMqttSvc", "onStartCommand → userId: $userId")
-            // Si el cliente ya está conectado, suscribir ahora mismo
-            if (mqttClient?.isConnected == true) {
-                scope.launch { suscribirFamiliar(userId) }
-            }
-            // Si aún no conectó, conectarYSuscribir() usará familiarUserId al terminar
-        }
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        scope.cancel()
-        try { mqttClient?.disconnect() } catch (_: Exception) {}
-        super.onDestroy()
-    }
-
-    // ── Init ──────────────────────────────────────────────────────────────────
-
-    private fun inicializarRepo() {
-        val db = AppDatabase.getInstance(applicationContext)
-        repository = AlertaPhoneRepository(
-            alertaDao         = db.alertaDao(),
-            ubicacionDao      = db.ubicacionDao(),
-            audioDao          = db.audioDao(),
-            notificacionDao   = db.notificacionDao(),
-            familiaUsuarioDao = db.familiaUsuarioDao(),
-            sessionManager    = sessionManager,
-            context           = applicationContext
-        )
-    }
-
-    // ── MQTT ──────────────────────────────────────────────────────────────────
-
-    private fun conectarYSuscribir() {
-        scope.launch {
-            try {
-                val clientId = "compasos_phone_${System.currentTimeMillis()}"
-                mqttClient = MqttClient(
-                    MqttConfig.BROKER_URL, clientId, MemoryPersistence()
-                ).apply {
-                    connect(MqttConnectOptions().apply {
-                        isCleanSession       = true
-                        connectionTimeout    = MqttConfig.TIMEOUT_CONEXION
-                        keepAliveInterval    = MqttConfig.KEEP_ALIVE
-                        isAutomaticReconnect = true
-                    })
-                }
-                Log.d("AlertaMqttSvc", "Conectado al broker")
-
-                // Topics del reloj
-                mqttClient!!.subscribe("${MqttConfig.TOPIC_ALERTA}/+/sos", 1) { _, msg ->
-                    scope.launch { manejarSOS(String(msg.payload, Charsets.UTF_8)) }
-                }
-                mqttClient!!.subscribe("${MqttConfig.TOPIC_ALERTA}/+/audio", 1) { _, msg ->
-                    scope.launch {
-                        repository.procesarAudio(String(msg.payload, Charsets.UTF_8))
-                    }
-                }
-
-                // ── Topics familiares ─────────────────────────────────────────
-                // Intentar con familiarUserId ya guardado, o leer de sesión ahora
-                val userId = familiarUserId ?: sessionManager.obtenerUsuarioId()
-                if (userId != null) {
-                    familiarUserId = userId
-                    suscribirFamiliar(userId)
-                } else {
-                    Log.w("AlertaMqttSvc",
-                        "Sin sesión al conectar — esperando userId via onStartCommand")
-                }
-
-            } catch (e: Exception) {
-                Log.e("AlertaMqttSvc", "Error MQTT: ${e.message}")
-            }
-        }
-    }
-
-    /** Suscribe los dos topics del familiar. Seguro llamarlo varias veces. */
-    private suspend fun suscribirFamiliar(userId: String) {
-        try {
-            val topicAlerta    = "${MqttConfig.TOPIC_FAMILIA}/$userId/alerta"
-            val topicUbicacion = "${MqttConfig.TOPIC_FAMILIA}/$userId/ubicacion"
-
-            mqttClient!!.subscribe(topicAlerta, 1) { _, msg ->
-                scope.launch { manejarAlertaFamiliar(String(msg.payload, Charsets.UTF_8)) }
-            }
-            mqttClient!!.subscribe(topicUbicacion, 1) { _, msg ->
-                scope.launch {
-                    repository.procesarUbicacionFamiliar(String(msg.payload, Charsets.UTF_8))
-                }
-            }
-            Log.d("AlertaMqttSvc", "✅ Suscrito a topics de familiar: $userId")
-        } catch (e: Exception) {
-            Log.e("AlertaMqttSvc", "Error suscribiendo familiar: ${e.message}")
-        }
-    }
-
-    // ── Handlers ──────────────────────────────────────────────────────────────
-
-    private suspend fun manejarSOS(payloadJson: String) {
-        Log.d("AlertaMqttSvc", "SOS recibido: $payloadJson")
-        val alerta = repository.procesarSOS(payloadJson) ?: return
-        repository.iniciarRastreoEnVivo(alerta.id, scope)
-        mostrarNotifSOS(
-            alertaId    = alerta.id,
-            dispositivo = alerta.dispositivoId ?: "Reloj",
-            titulo      = "Alerta ${alerta.tipoAlerta} recibida"
-        )
-    }
-
-    private suspend fun manejarAlertaFamiliar(payloadJson: String) {
-        Log.d("AlertaMqttSvc", "Alerta familiar recibida: $payloadJson")
-        val alerta = repository.procesarAlertaFamiliar(payloadJson) ?: run {
-            Log.w("AlertaMqttSvc", "procesarAlertaFamiliar devolvió null")
-            return
-        }
-        Log.d("AlertaMqttSvc", "Alerta familiar guardada: ${alerta.id}")
-        mostrarNotifSOS(
-            alertaId    = alerta.id,
-            dispositivo = alerta.dispositivoId ?: "Familiar",
-            titulo      = "Un familiar necesita ayuda"
-        )
-    }
-
-    // ── Notificaciones ────────────────────────────────────────────────────────
-
-    private fun mostrarNotifSOS(alertaId: String, dispositivo: String, titulo: String) {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)!!.apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("nav_route", "alertaDetalle/$alertaId")
-        }
-        val pending = PendingIntent.getActivity(
-            this, alertaId.hashCode(), intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notif = NotificationCompat.Builder(this, CANAL_SOS)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("⚠️ $titulo")
-            .setContentText("Dispositivo: $dispositivo · Toca para ver la ubicación")
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVibrate(longArrayOf(0, 500, 250, 500))
-            .setAutoCancel(true)
-            .setContentIntent(pending)
-            .build()
-
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(System.currentTimeMillis().toInt(), notif)
-    }
-
-    private fun notifServicio() = NotificationCompat.Builder(this, CANAL_SVC)
-        .setSmallIcon(android.R.drawable.ic_menu_compass)
-        .setContentTitle("CompaSOS activo")
-        .setContentText("Escuchando alertas del reloj vinculado")
-        .setPriority(NotificationCompat.PRIORITY_LOW)
-        .build()
-
-    private fun crearCanales() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(
-                NotificationChannel(CANAL_SVC, "Servicio CompaSOS",
-                    NotificationManager.IMPORTANCE_LOW)
-            )
-            nm.createNotificationChannel(
-                NotificationChannel(CANAL_SOS, "Alertas de emergencia",
-                    NotificationManager.IMPORTANCE_HIGH).apply {
-                    enableVibration(true)
-                    enableLights(true)
-                }
-            )
-        }
     }
 }
 </file>
@@ -2979,6 +1975,191 @@ class ProfileViewModel(
     fun recargarPerfil() {
         cargarPerfil()
     }
+}
+</file>
+
+<file path="app/src/main/java/com/utng/compasos_movil/TvVinculacionModule/TvVinculacionViewModel.kt">
+package com.utng.compasos_movil.TvVinculacionModule
+
+import android.util.Log
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.utng.compasos_movil.config.MqttConfig
+import com.utng.compasos_movil.config.MqttManager
+import com.utng.compasos_movil.data.dao.DispositivoDao
+import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao   // ← NUEVO
+import com.utng.compasos_movil.data.dao.UsuarioDao
+import com.utng.compasos_movil.data.entity.DispositivoEntity
+import com.utng.compasos_movil.utils.SessionManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
+
+sealed class EstadoVinculacionTv {
+    object Inactivo : EstadoVinculacionTv()
+    data class Generando(val codigo: String) : EstadoVinculacionTv()
+    data class Exitosa(val modeloTv: String) : EstadoVinculacionTv()
+    data class Error(val mensaje: String) : EstadoVinculacionTv()
+}
+
+class TvVinculacionViewModel(
+    private val usuarioDao:        UsuarioDao,
+    private val dispositivoDao:    DispositivoDao,
+    private val familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+    private val sessionManager:    SessionManager
+) : ViewModel() {
+
+    companion object { private const val TAG = "TvVinculacionVM" }
+
+    private val mqtt = MqttManager()
+    private val fmt  = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+    private val _estado = MutableStateFlow<EstadoVinculacionTv>(EstadoVinculacionTv.Inactivo)
+    val estado: StateFlow<EstadoVinculacionTv> = _estado.asStateFlow()
+
+    private var codigoActivo: String? = null
+
+    fun iniciarVinculacion() {
+        val codigo = generarCodigo()
+        codigoActivo = codigo
+        _estado.value = EstadoVinculacionTv.Generando(codigo)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (!mqtt.estaConectado) mqtt.conectar()
+                val topicSolicitud = "${MqttConfig.TOPIC_VINCULACION}/tv/$codigo/solicitud"
+                mqtt.suscribir(topicSolicitud) { _, payload ->
+                    viewModelScope.launch(Dispatchers.IO) {
+                        procesarSolicitudTv(payload, codigo)
+                    }
+                }
+                Log.d(TAG, "Esperando solicitud de la TV con código: $codigo")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al iniciar vinculación TV: ${e.message}")
+                _estado.value = EstadoVinculacionTv.Error("Sin conexión al servidor MQTT")
+            }
+        }
+    }
+
+    private suspend fun procesarSolicitudTv(payload: String, codigoEsperado: String) {
+        if (codigoActivo != codigoEsperado) return
+        try {
+            val json   = JSONObject(payload)
+            val modelo = json.optString("modelo", "Android TV")
+            val idTv   = json.optString("tvId",
+                json.optString("dispositivoId", "tv_${UUID.randomUUID()}"))
+
+            val userId = sessionManager.obtenerUsuarioId() ?: run {
+                _estado.update { EstadoVinculacionTv.Error("Sin sesión activa") }
+                return
+            }
+            val usuario = usuarioDao.obtenerPorId(userId)
+            val nombre  = usuario?.nombre  ?: sessionManager.obtenerUsuarioNombre() ?: ""
+            val email   = usuario?.correo  ?: sessionManager.obtenerUsuarioEmail()  ?: ""
+
+            // 1. Responder a la TV con datos de sesión
+            mqtt.publicar(
+                "${MqttConfig.TOPIC_VINCULACION}/tv/$codigoEsperado/respuesta",
+                JSONObject().apply {
+                    put("usuarioId", userId)
+                    put("nombre",    nombre)
+                    put("email",     email)
+                }.toString()
+            )
+
+            // 2. Guardar la TV en Room (teléfono)
+            dispositivoDao.insertar(
+                DispositivoEntity(
+                    id               = idTv,
+                    usuarioId        = userId,
+                    tipo             = "tv",
+                    modelo           = modelo,
+                    fabricante       = json.optString("fabricante").ifBlank { null },
+                    numeroSerie      = json.optString("numeroSerie").ifBlank { null },
+                    tokenFcm         = null,
+                    bateria          = null,
+                    conectado        = true,
+                    fechaVinculacion = fmt.format(Date())
+                )
+            )
+            Log.d(TAG, "TV guardada en Room: $idTv")
+
+            // 3. ── NUEVO: construir familiares reales ─────────────────────────
+            val familiaresArray = JSONArray()
+
+            // El propietario aparece primero — así el TV rastrea su posición en el mapa
+            familiaresArray.put(JSONObject().apply {
+                put("usuarioId", userId)
+                put("nombre",    nombre)
+                put("apellido",  "")
+                put("enLinea",   true)
+            })
+
+            // Familiares registrados en la app
+            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(userId)
+            for (f in familiares) {
+                val datosFamiliar = usuarioDao.obtenerPorId(f.usuarioId) ?: continue
+                familiaresArray.put(JSONObject().apply {
+                    put("usuarioId", f.usuarioId)
+                    put("nombre",    datosFamiliar.nombre ?: "")
+                    put("apellido",  "")
+                    put("enLinea",   false)
+                })
+            }
+            Log.d(TAG, "Sesión con ${familiaresArray.length()} familiar(es)")
+
+            // 4. Enviar sesión inicial a la TV
+            mqtt.publicar(
+                "${MqttConfig.TOPIC_TV}/$idTv/sesion",
+                JSONObject().apply {
+                    put("usuarioId",  userId)
+                    put("nombre",     nombre)
+                    put("email",      email)
+                    put("familiares", familiaresArray)   // ← ahora con datos reales
+                }.toString()
+            )
+
+            _estado.update { EstadoVinculacionTv.Exitosa(modelo) }
+            Log.d(TAG, "✅ TV vinculada: $modelo")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error procesando solicitud de TV: ${e.message}")
+            _estado.update { EstadoVinculacionTv.Error("Error al procesar la solicitud de la TV") }
+        }
+    }
+
+    fun reiniciar() {
+        codigoActivo  = null
+        _estado.value = EstadoVinculacionTv.Inactivo
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        viewModelScope.launch(Dispatchers.IO) { mqtt.desconectar() }
+    }
+
+    private fun generarCodigo(): String {
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return (1..6).map { chars.random() }.joinToString("")
+    }
+}
+
+class TvVinculacionViewModelFactory(
+    private val usuarioDao:        UsuarioDao,
+    private val dispositivoDao:    DispositivoDao,
+    private val familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+    private val sessionManager:    SessionManager
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        TvVinculacionViewModel(usuarioDao, dispositivoDao, familiaUsuarioDao, sessionManager) as T
 }
 </file>
 
@@ -4854,6 +4035,163 @@ private fun formatDate(dateString: String): String {
 }
 </file>
 
+<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/VincularTvScreen.kt">
+package com.utng.compasos_movil.ui.screens
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import com.utng.compasos_movil.TvVinculacionModule.EstadoVinculacionTv
+import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModel
+import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModelFactory
+import com.utng.compasos_movil.data.dao.DispositivoDao
+import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.UsuarioDao
+import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
+import com.utng.compasos_movil.ui.theme.CompaSOSColors
+import com.utng.compasos_movil.utils.SessionManager
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VincularTvScreen(
+    navController: NavController,
+    usuarioDao: UsuarioDao,
+    dispositivoDao: DispositivoDao,
+    familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+
+) {
+    val context = LocalContext.current
+    val viewModel: TvVinculacionViewModel = viewModel(
+        factory = TvVinculacionViewModelFactory(
+            usuarioDao     = usuarioDao,
+            dispositivoDao = dispositivoDao,
+            sessionManager = SessionManager(context),
+            familiaUsuarioDao = familiaUsuarioDao,
+        )
+    )
+    val estado by viewModel.estado.collectAsState()
+
+    BackHandler(enabled = true) { navController.popBackStack() }
+
+    LaunchedEffect(Unit) {
+        if (estado is EstadoVinculacionTv.Inactivo) viewModel.iniciarVinculacion()
+    }
+
+    Scaffold(
+        containerColor = CompaSOSColors.Background,
+        topBar = {
+            TopAppBar(
+                title = { Text("Vincular pantalla TV", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Regresar", tint = CompaSOSColors.IconTint)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = CompaSOSColors.Background)
+            )
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier.fillMaxSize().background(CompaSOSColors.Background).padding(padding),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                Icon(Icons.Filled.Tv, contentDescription = null, tint = CompaSOSColors.AccentBlue, modifier = Modifier.size(48.dp))
+
+                when (val e = estado) {
+                    is EstadoVinculacionTv.Generando -> {
+                        Text(
+                            "Escribe este código en tu pantalla CompaSOS TV",
+                            color = CompaSOSColors.TextSecondary,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
+                            color = CompaSOSColors.FieldBackground
+                        ) {
+                            Text(
+                                text = e.codigo.chunked(3).joinToString("  "),
+                                fontSize = 44.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace,
+                                color = CompaSOSColors.AccentBlue,
+                                textAlign = TextAlign.Center,
+                                letterSpacing = 4.sp,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = CompaSOSColors.AccentBlue
+                            )
+                            Text("Esperando a la TV...", fontSize = 12.sp, color = CompaSOSColors.TextSecondary)
+                        }
+                    }
+
+                    is EstadoVinculacionTv.Exitosa -> {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(56.dp))
+                        Text("¡TV vinculada correctamente!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CompaSOSColors.TextPrimary, textAlign = TextAlign.Center)
+                        Text(e.modeloTv, fontSize = 14.sp, color = CompaSOSColors.AccentBlue)
+                        Button(
+                            onClick = { navController.popBackStack() },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
+                            colors = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue)
+                        ) {
+                            Text("Listo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    is EstadoVinculacionTv.Error -> {
+                        Icon(Icons.Filled.Error, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(56.dp))
+                        Text(e.mensaje, fontSize = 13.sp, color = CompaSOSColors.TextSecondary, textAlign = TextAlign.Center)
+                        Button(
+                            onClick = { viewModel.iniciarVinculacion() },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(CompaSOSButtonShapeRadius),
+                            colors = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue)
+                        ) {
+                            Text("Reintentar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    else -> CircularProgressIndicator(color = CompaSOSColors.AccentBlue)
+                }
+            }
+        }
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/utng/compasos_movil/ui/theme/Color.kt">
 package com.utng.compasos_movil.ui.theme
 
@@ -5097,6 +4435,71 @@ class SessionManager(context: Context) {
             "email" to (obtenerUsuarioEmail() ?: ""),
             "nombre" to (obtenerUsuarioNombre() ?: "")
         )
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/utng/compasos_movil/utils/TvMqttPublisher.kt">
+package com.utng.compasos_movil.utils
+
+import com.utng.compasos_movil.config.MqttConfig
+import com.utng.compasos_movil.config.MqttManager
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
+
+object TvMqttPublisher {
+
+    private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+    /**
+     * Envía una alerta de emergencia a una TV vinculada
+     * Topic: compasos/tv/{tvId}/alerta
+     */
+    fun enviarAlertaATv(
+        mqtt: MqttManager,
+        tvId: String,
+        alertaId: String = UUID.randomUUID().toString(),
+        tipoAlerta: String,
+        descripcion: String,
+        emisorNombre: String,
+        emisorId: String,
+        latitud: Double?,
+        longitud: Double?
+    ) {
+        val payload = JSONObject().apply {
+            put("alertaId", alertaId)
+            put("tipoAlerta", tipoAlerta)
+            put("descripcion", descripcion)
+            put("emisorNombre", emisorNombre)
+            put("emisorId", emisorId)
+            latitud?.let { put("latitud", it) }
+            longitud?.let { put("longitud", it) }
+            put("fecha", fmt.format(Date()))
+        }.toString()
+
+        mqtt.publicar("${MqttConfig.TOPIC_TV}/$tvId/alerta", payload)
+    }
+
+    /**
+     * Envía la ubicación en vivo de un familiar a la TV vinculada
+     * Topic: compasos/tv/{tvId}/ubicacion
+     */
+    fun enviarUbicacionATv(
+        mqtt: MqttManager,
+        tvId: String,
+        usuarioId: String,
+        latitud: Double,
+        longitud: Double
+    ) {
+        val payload = JSONObject().apply {
+            put("usuarioId", usuarioId)
+            put("latitud", latitud)
+            put("longitud", longitud)
+            put("fecha", fmt.format(Date()))
+        }.toString()
+
+        mqtt.publicar("${MqttConfig.TOPIC_TV}/$tvId/ubicacion", payload)
     }
 }
 </file>
@@ -5640,6 +5043,414 @@ if "%OS%"=="Windows_NT" endlocal
 :omega
 </file>
 
+<file path="app/src/main/java/com/utng/compasos_movil/AlertaPhoneRepository/AlertaPhoneRepository.kt">
+package com.utng.compasos_movil.AlertaPhoneRepository
+
+import android.content.Context
+import android.util.Log
+import com.utng.compasos_movil.config.MqttConfig
+import com.utng.compasos_movil.config.MqttManager
+import com.utng.compasos_movil.data.LocationRepository
+import com.utng.compasos_movil.data.UbicacionActual
+import com.utng.compasos_movil.data.dao.AlertaDao
+import com.utng.compasos_movil.data.dao.AudioDao
+import com.utng.compasos_movil.data.dao.DispositivoDao
+import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.NotificacionDao
+import com.utng.compasos_movil.data.dao.UbicacionDao
+import com.utng.compasos_movil.data.entity.AlertaEntity
+import com.utng.compasos_movil.data.entity.AudioEntity
+import com.utng.compasos_movil.data.entity.NotificacionEntity
+import com.utng.compasos_movil.data.entity.UbicacionEntity
+import com.utng.compasos_movil.utils.SessionManager
+import com.utng.compasos_movil.utils.TvMqttPublisher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
+
+class AlertaPhoneRepository(
+    private val alertaDao:         AlertaDao,
+    private val ubicacionDao:      UbicacionDao,
+    private val audioDao:          AudioDao,
+    private val notificacionDao:   NotificacionDao,
+    private val familiaUsuarioDao: FamiliaUsuarioDao,
+    private val dispositivoDao:    DispositivoDao,   // ← NUEVO
+    private val sessionManager:    SessionManager,
+    private val context:           Context
+) {
+    private val mqtt         = MqttManager()
+    private val locationRepo = LocationRepository(context)
+    private val fmt          = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+    // ── SOS ──────────────────────────────────────────────────────────────────
+
+    suspend fun procesarSOS(payloadJson: String): AlertaEntity? = withContext(Dispatchers.IO) {
+        try {
+            val json      = JSONObject(payloadJson)
+            val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
+                Log.e("AlertaPhoneRepo", "No hay sesión activa")
+                return@withContext null
+            }
+
+            val alertaId = json.optString("alertaId").ifBlank { UUID.randomUUID().toString() }
+
+            val alerta = AlertaEntity(
+                id            = alertaId,
+                usuarioId     = usuarioId,
+                dispositivoId = json.optString("dispositivoId", "desconocido"),
+                tipoAlerta    = json.optString("tipoAlerta",    "SOS"),
+                descripcion   = json.optString("descripcion",   "Alerta de pánico"),
+                estado        = "activa",
+                fecha         = json.optString("fecha", fmt.format(Date()))
+            )
+            alertaDao.insertar(alerta)
+            Log.d("AlertaPhoneRepo", "Alerta guardada en Room: $alertaId")
+
+            val ubicacion = locationRepo.obtenerUltimaUbicacion()
+            if (ubicacion != null) {
+                ubicacionDao.insertar(
+                    UbicacionEntity(
+                        id        = UUID.randomUUID().toString(),
+                        alertaId  = alertaId,
+                        latitud   = ubicacion.latitud,
+                        longitud  = ubicacion.longitud,
+                        precision = null,
+                        velocidad = null,
+                        fecha     = fmt.format(Date())
+                    )
+                )
+            }
+
+            notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
+            alerta
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error procesando SOS: ${e.message}")
+            null
+        }
+    }
+
+    // ── Notificación a familiares ─────────────────────────────────────────────
+
+    private suspend fun notificarFamiliares(
+        alerta:    AlertaEntity,
+        usuarioId: String,
+        latitud:   Double?,
+        longitud:  Double?
+    ) {
+        try {
+            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(usuarioId)
+            if (familiares.isEmpty()) {
+                Log.d("AlertaPhoneRepo", "Sin familiares registrados para notificar")
+                return
+            }
+            Log.d("AlertaPhoneRepo", "Notificando a ${familiares.size} familiar(es)")
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            val payloadBase = JSONObject().apply {
+                put("alertaId",      alerta.id)
+                put("dispositivoId", alerta.dispositivoId)
+                put("tipoAlerta",    alerta.tipoAlerta)
+                put("descripcion",   alerta.descripcion)
+                put("estado",        alerta.estado)
+                put("fecha",         alerta.fecha)
+                latitud?.let  { put("latitud",  it) }
+                longitud?.let { put("longitud", it) }
+            }.toString()
+
+            for (familiar in familiares) {
+                notificacionDao.insertar(
+                    NotificacionEntity(
+                        id           = UUID.randomUUID().toString(),
+                        alertaId     = alerta.id,
+                        destinatario = familiar.usuarioId,
+                        tipo         = "SOS",
+                        estado       = "enviada",
+                        fecha        = fmt.format(Date())
+                    )
+                )
+                mqtt.publicar(
+                    "${MqttConfig.TOPIC_FAMILIA}/${familiar.usuarioId}/alerta",
+                    payloadBase
+                )
+                Log.d("AlertaPhoneRepo", "Alerta enviada a familiar: ${familiar.usuarioId}")
+            }
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error notificando familiares: ${e.message}")
+        }
+    }
+
+    // ── NUEVO: Notificación a TVs vinculadas ──────────────────────────────────
+
+    private suspend fun notificarTvs(
+        alerta:    AlertaEntity,
+        usuarioId: String,
+        latitud:   Double?,
+        longitud:  Double?
+    ) {
+        try {
+            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
+            if (tvs.isEmpty()) return
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            val nombre = sessionManager.obtenerUsuarioNombre() ?: ""
+
+            for (tv in tvs) {
+                TvMqttPublisher.enviarAlertaATv(
+                    mqtt         = mqtt,
+                    tvId         = tv.id,
+                    alertaId     = alerta.id,
+                    tipoAlerta   = alerta.tipoAlerta   ?: "SOS",                  // ← fix
+                    descripcion  = alerta.descripcion ?: "Alerta de emergencia",
+                    emisorNombre = nombre,
+                    emisorId     = usuarioId,
+                    latitud      = latitud,
+                    longitud     = longitud
+                )
+                Log.d("AlertaPhoneRepo", "Alerta enviada a TV: ${tv.id} (${tv.modelo})")
+            }
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error notificando TVs: ${e.message}")
+        }
+    }
+
+    // ── Rastreo continuo de ubicación ─────────────────────────────────────────
+
+    fun iniciarRastreoEnVivo(alertaId: String, scope: CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
+            var contador = 0
+            locationRepo.ubicacionEnVivo()
+                .catch { e -> Log.e("AlertaPhoneRepo", "Error en rastreo: ${e.message}") }
+                .collect { ubicacion ->
+                    ubicacionDao.insertar(
+                        UbicacionEntity(
+                            id        = UUID.randomUUID().toString(),
+                            alertaId  = alertaId,
+                            latitud   = ubicacion.latitud,
+                            longitud  = ubicacion.longitud,
+                            precision = null,
+                            velocidad = null,
+                            fecha     = fmt.format(Date())
+                        )
+                    )
+                    if (++contador % 3 == 0) {
+                        publicarUbicacionAFamiliares(alertaId, ubicacion)
+                        publicarUbicacionATvs(ubicacion) // ← NUEVO
+                    }
+                }
+        }
+    }
+
+    private suspend fun publicarUbicacionAFamiliares(
+        alertaId: String,
+        ubicacion: UbicacionActual
+    ) {
+        try {
+            val usuarioId  = sessionManager.obtenerUsuarioId() ?: return
+            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(usuarioId)
+            if (familiares.isEmpty()) return
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            val payload = JSONObject().apply {
+                put("alertaId", alertaId)
+                put("tipo",     "ubicacion_viva")
+                put("latitud",  ubicacion.latitud)
+                put("longitud", ubicacion.longitud)
+                put("fecha",    fmt.format(Date()))
+            }.toString()
+
+            for (familiar in familiares) {
+                mqtt.publicar(
+                    "${MqttConfig.TOPIC_FAMILIA}/${familiar.usuarioId}/ubicacion",
+                    payload
+                )
+            }
+            Log.d("AlertaPhoneRepo", "Ubicación en vivo publicada a ${familiares.size} familiar(es)")
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error publicando ubicación a familiares: ${e.message}")
+        }
+    }
+
+    // ← NUEVO: publica ubicación del dueño del SOS a cada TV vinculada
+    private suspend fun publicarUbicacionATvs(ubicacion: UbicacionActual) {
+        try {
+            val usuarioId = sessionManager.obtenerUsuarioId() ?: return
+            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
+            if (tvs.isEmpty()) return
+
+            if (!mqtt.estaConectado) mqtt.conectar()
+
+            for (tv in tvs) {
+                TvMqttPublisher.enviarUbicacionATv(
+                    mqtt      = mqtt,
+                    tvId      = tv.id,
+                    usuarioId = usuarioId,
+                    latitud   = ubicacion.latitud,
+                    longitud  = ubicacion.longitud
+                )
+            }
+            Log.d("AlertaPhoneRepo", "Ubicación en vivo enviada a ${tvs.size} TV(s)")
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error publicando ubicación a TVs: ${e.message}")
+        }
+    }
+
+    // ── Audio del reloj ───────────────────────────────────────────────────────
+
+    suspend fun procesarAudio(payloadJson: String) = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject(payloadJson)
+            audioDao.insertar(
+                AudioEntity(
+                    id       = json.optString("id", UUID.randomUUID().toString()),
+                    alertaId = json.getString("alertaId"),
+                    urlAudio = json.optString("audio"),
+                    duracion = null,
+                    fecha    = json.optString("fecha", fmt.format(Date()))
+                )
+            )
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error procesando audio: ${e.message}")
+        }
+    }
+
+    // ── Alerta recibida como familiar ─────────────────────────────────────────
+
+    suspend fun procesarAlertaFamiliar(payloadJson: String): AlertaEntity? =
+        withContext(Dispatchers.IO) {
+            try {
+                val json      = JSONObject(payloadJson)
+                val usuarioId = sessionManager.obtenerUsuarioId() ?: return@withContext null
+                val alertaId  = json.optString("alertaId").ifBlank {
+                    UUID.randomUUID().toString()
+                }
+
+                alertaDao.obtenerPorId(alertaId)?.let { return@withContext it }
+
+                val alerta = AlertaEntity(
+                    id            = alertaId,
+                    usuarioId     = usuarioId,
+                    dispositivoId = json.optString("dispositivoId"),
+                    tipoAlerta    = json.optString("tipoAlerta", "SOS"),
+                    descripcion   = json.optString("descripcion"),
+                    estado        = json.optString("estado", "activa"),
+                    fecha         = json.optString("fecha", fmt.format(Date()))
+                )
+                alertaDao.insertar(alerta)
+
+                notificacionDao.insertar(
+                    NotificacionEntity(
+                        id           = UUID.randomUUID().toString(),
+                        alertaId     = alertaId,
+                        destinatario = usuarioId,
+                        tipo         = "recibida",
+                        estado       = "recibida",
+                        fecha        = fmt.format(Date())
+                    )
+                )
+
+                val lat = json.optDouble("latitud")
+                val lng = json.optDouble("longitud")
+                if (!lat.isNaN() && !lng.isNaN()) {
+                    ubicacionDao.insertar(
+                        UbicacionEntity(
+                            id        = UUID.randomUUID().toString(),
+                            alertaId  = alertaId,
+                            latitud   = lat,
+                            longitud  = lng,
+                            precision = null,
+                            velocidad = null,
+                            fecha     = fmt.format(Date())
+                        )
+                    )
+                }
+                alerta
+            } catch (e: Exception) {
+                Log.e("AlertaPhoneRepo", "Error procesando alerta de familiar: ${e.message}")
+                null
+            }
+        }
+
+    suspend fun procesarUbicacionFamiliar(payloadJson: String) = withContext(Dispatchers.IO) {
+        try {
+            val json     = JSONObject(payloadJson)
+            val alertaId = json.optString("alertaId")
+            if (alertaId.isBlank()) return@withContext
+
+            val lat = json.optDouble("latitud")
+            val lng = json.optDouble("longitud")
+            if (lat.isNaN() || lng.isNaN()) return@withContext
+
+            ubicacionDao.insertar(
+                UbicacionEntity(
+                    id        = UUID.randomUUID().toString(),
+                    alertaId  = alertaId,
+                    latitud   = lat,
+                    longitud  = lng,
+                    precision = null,
+                    velocidad = null,
+                    fecha     = json.optString("fecha", fmt.format(Date()))
+                )
+            )
+            Log.d("AlertaPhoneRepo", "Ubicación de familiar guardada para alerta: $alertaId")
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error procesando ubicación de familiar: ${e.message}")
+        }
+    }
+
+    suspend fun crearSOSDesdeMovil(): AlertaEntity? = withContext(Dispatchers.IO) {
+        try {
+            val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
+                Log.e("AlertaPhoneRepo", "crearSOSDesdeMovil: sin sesión activa")
+                return@withContext null
+            }
+            val alertaId      = UUID.randomUUID().toString()
+            val dispositivoId = "movil_$usuarioId"
+
+            val alerta = AlertaEntity(
+                id            = alertaId,
+                usuarioId     = usuarioId,
+                dispositivoId = dispositivoId,
+                tipoAlerta    = "SOS",
+                descripcion   = "Alerta de pánico desde el teléfono",
+                estado        = "activa",
+                fecha         = fmt.format(Date())
+            )
+            alertaDao.insertar(alerta)
+
+            val ubicacion = locationRepo.obtenerUltimaUbicacion()
+            if (ubicacion != null) {
+                ubicacionDao.insertar(
+                    UbicacionEntity(
+                        id        = UUID.randomUUID().toString(),
+                        alertaId  = alertaId,
+                        latitud   = ubicacion.latitud,
+                        longitud  = ubicacion.longitud,
+                        precision = null,
+                        velocidad = null,
+                        fecha     = fmt.format(Date())
+                    )
+                )
+            }
+            notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
+            alerta
+        } catch (e: Exception) {
+            Log.e("AlertaPhoneRepo", "Error en crearSOSDesdeMovil: ${e.message}")
+            null
+        }
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/utng/compasos_movil/AuthModule/Authviewmodel.kt">
 package com.utng.compasos_movil.AuthModule
 
@@ -5847,21 +5658,246 @@ class AuthViewModel(
 }
 </file>
 
-<file path="app/src/main/java/com/utng/compasos_movil/config/MqttConfig.kt">
+<file path="app/src/main/java/com/utng/compasos_movil/config/AlertaMqttService.kt">
 package com.utng.compasos_movil.config
 
-object MqttConfig {
-    const val BROKER_URL = "tcp://192.168.1.22:1883"
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.utng.compasos_movil.AlertaPhoneRepository.AlertaPhoneRepository
+import com.utng.compasos_movil.data.AppDatabase
+import com.utng.compasos_movil.utils.SessionManager
+import kotlinx.coroutines.*
+import org.eclipse.paho.client.mqttv3.*
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
-    const val TIMEOUT_CONEXION = 10
-    const val KEEP_ALIVE       = 60
-    const val QOS              = 1
+class AlertaMqttService : Service() {
 
-    const val TOPIC_VINCULACION = "compasos/vinculacion"
-    const val TOPIC_DISPOSITIVO = "compasos/dispositivo"
-    const val TOPIC_ALERTA      = "compasos/alerta"   // ← NUEVO
-    const val TOPIC_FAMILIA     = "compasos/familia"  // ← NUEVO
-    const val TOPIC_TV          = "compasos/tv"          // ← Agregado para la TV
+    private val scope          = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var mqttClient:    MqttClient? = null
+    private lateinit var repository:     AlertaPhoneRepository
+    private lateinit var sessionManager: SessionManager
+
+    @Volatile private var familiarUserId: String? = null
+
+    companion object {
+        private const val CANAL_SVC    = "compasos_svc"
+        private const val CANAL_SOS    = "compasos_sos"
+        private const val NOTIF_SVC_ID = 9001
+        private const val EXTRA_USER   = "usuario_id"
+
+        fun iniciar(context: Context, userId: String? = null) {
+            val intent = Intent(context, AlertaMqttService::class.java).apply {
+                userId?.let { putExtra(EXTRA_USER, it) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                context.startForegroundService(intent)
+            else
+                context.startService(intent)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        sessionManager = SessionManager(applicationContext)
+        crearCanales()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIF_SVC_ID, notifServicio(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIF_SVC_ID, notifServicio())
+        }
+
+        inicializarRepo()
+        conectarYSuscribir()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val userId = intent?.getStringExtra(EXTRA_USER)
+            ?: sessionManager.obtenerUsuarioId()
+
+        if (userId != null && userId != familiarUserId) {
+            familiarUserId = userId
+            Log.d("AlertaMqttSvc", "onStartCommand → userId: $userId")
+            if (mqttClient?.isConnected == true) {
+                scope.launch { suscribirFamiliar(userId) }
+            }
+        }
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        scope.cancel()
+        try { mqttClient?.disconnect() } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    private fun inicializarRepo() {
+        val db = AppDatabase.getInstance(applicationContext)
+        repository = AlertaPhoneRepository(
+            alertaDao         = db.alertaDao(),
+            ubicacionDao      = db.ubicacionDao(),
+            audioDao          = db.audioDao(),
+            notificacionDao   = db.notificacionDao(),
+            familiaUsuarioDao = db.familiaUsuarioDao(),
+            dispositivoDao    = db.dispositivoDao(),   // ← NUEVO
+            sessionManager    = sessionManager,
+            context           = applicationContext
+        )
+    }
+
+    // ── MQTT ──────────────────────────────────────────────────────────────────
+
+    private fun conectarYSuscribir() {
+        scope.launch {
+            try {
+                val clientId = "compasos_phone_${System.currentTimeMillis()}"
+                mqttClient = MqttClient(
+                    MqttConfig.BROKER_URL, clientId, MemoryPersistence()
+                ).apply {
+                    connect(MqttConnectOptions().apply {
+                        isCleanSession       = true
+                        connectionTimeout    = MqttConfig.TIMEOUT_CONEXION
+                        keepAliveInterval    = MqttConfig.KEEP_ALIVE
+                        isAutomaticReconnect = true
+                    })
+                }
+                Log.d("AlertaMqttSvc", "Conectado al broker")
+
+                // El reloj — no se toca
+                mqttClient!!.subscribe("${MqttConfig.TOPIC_ALERTA}/+/sos", 1) { _, msg ->
+                    scope.launch { manejarSOS(String(msg.payload, Charsets.UTF_8)) }
+                }
+                mqttClient!!.subscribe("${MqttConfig.TOPIC_ALERTA}/+/audio", 1) { _, msg ->
+                    scope.launch {
+                        repository.procesarAudio(String(msg.payload, Charsets.UTF_8))
+                    }
+                }
+
+                val userId = familiarUserId ?: sessionManager.obtenerUsuarioId()
+                if (userId != null) {
+                    familiarUserId = userId
+                    suscribirFamiliar(userId)
+                } else {
+                    Log.w("AlertaMqttSvc",
+                        "Sin sesión al conectar — esperando userId via onStartCommand")
+                }
+
+            } catch (e: Exception) {
+                Log.e("AlertaMqttSvc", "Error MQTT: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun suscribirFamiliar(userId: String) {
+        try {
+            val topicAlerta    = "${MqttConfig.TOPIC_FAMILIA}/$userId/alerta"
+            val topicUbicacion = "${MqttConfig.TOPIC_FAMILIA}/$userId/ubicacion"
+
+            mqttClient!!.subscribe(topicAlerta, 1) { _, msg ->
+                scope.launch { manejarAlertaFamiliar(String(msg.payload, Charsets.UTF_8)) }
+            }
+            mqttClient!!.subscribe(topicUbicacion, 1) { _, msg ->
+                scope.launch {
+                    repository.procesarUbicacionFamiliar(String(msg.payload, Charsets.UTF_8))
+                }
+            }
+            Log.d("AlertaMqttSvc", "✅ Suscrito a topics de familiar: $userId")
+        } catch (e: Exception) {
+            Log.e("AlertaMqttSvc", "Error suscribiendo familiar: ${e.message}")
+        }
+    }
+
+    // ── Handlers ──────────────────────────────────────────────────────────────
+
+    private suspend fun manejarSOS(payloadJson: String) {
+        Log.d("AlertaMqttSvc", "SOS recibido: $payloadJson")
+        val alerta = repository.procesarSOS(payloadJson) ?: return
+        // procesarSOS() ya se encarga de notificarFamiliares() y notificarTvs()
+        repository.iniciarRastreoEnVivo(alerta.id, scope)
+        mostrarNotifSOS(
+            alertaId    = alerta.id,
+            dispositivo = alerta.dispositivoId ?: "Reloj",
+            titulo      = "Alerta ${alerta.tipoAlerta} recibida"
+        )
+    }
+
+    private suspend fun manejarAlertaFamiliar(payloadJson: String) {
+        Log.d("AlertaMqttSvc", "Alerta familiar recibida: $payloadJson")
+        val alerta = repository.procesarAlertaFamiliar(payloadJson) ?: run {
+            Log.w("AlertaMqttSvc", "procesarAlertaFamiliar devolvió null")
+            return
+        }
+        Log.d("AlertaMqttSvc", "Alerta familiar guardada: ${alerta.id}")
+        mostrarNotifSOS(
+            alertaId    = alerta.id,
+            dispositivo = alerta.dispositivoId ?: "Familiar",
+            titulo      = "Un familiar necesita ayuda"
+        )
+    }
+
+    // ── Notificaciones ────────────────────────────────────────────────────────
+
+    private fun mostrarNotifSOS(alertaId: String, dispositivo: String, titulo: String) {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)!!.apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("nav_route", "alertaDetalle/$alertaId")
+        }
+        val pending = PendingIntent.getActivity(
+            this, alertaId.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, CANAL_SOS)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("⚠️ $titulo")
+            .setContentText("Dispositivo: $dispositivo · Toca para ver la ubicación")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVibrate(longArrayOf(0, 500, 250, 500))
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(System.currentTimeMillis().toInt(), notif)
+    }
+
+    private fun notifServicio() = NotificationCompat.Builder(this, CANAL_SVC)
+        .setSmallIcon(android.R.drawable.ic_menu_compass)
+        .setContentTitle("CompaSOS activo")
+        .setContentText("Escuchando alertas del reloj vinculado")
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .build()
+
+    private fun crearCanales() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(
+                NotificationChannel(CANAL_SVC, "Servicio CompaSOS",
+                    NotificationManager.IMPORTANCE_LOW)
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(CANAL_SOS, "Alertas de emergencia",
+                    NotificationManager.IMPORTANCE_HIGH).apply {
+                    enableVibration(true)
+                    enableLights(true)
+                }
+            )
+        }
+    }
 }
 </file>
 
@@ -5881,35 +5917,6 @@ interface AudioDao {
 
     @Query("SELECT * FROM audios WHERE alertaId = :alertaId ORDER BY fecha DESC")
     suspend fun obtenerPorAlerta(alertaId: String): List<AudioEntity>
-}
-</file>
-
-<file path="app/src/main/java/com/utng/compasos_movil/data/dao/DispositivoDao.kt">
-package com.utng.compasos_movil.data.dao
-
-import androidx.room3.Dao
-import androidx.room3.Insert
-import androidx.room3.Query
-import com.utng.compasos_movil.data.entity.DispositivoEntity
-
-@Dao
-interface DispositivoDao {
-
-    @Insert
-    suspend fun insertar(dispositivo: DispositivoEntity)
-
-    @Query("SELECT * FROM dispositivos")
-    suspend fun obtenerTodos(): List<DispositivoEntity>
-
-    @Query("SELECT * FROM dispositivos WHERE usuarioId = :usuarioId")
-    suspend fun obtenerPorUsuario(usuarioId: String): List<DispositivoEntity>
-
-    @Query("SELECT * FROM dispositivos WHERE id = :id")
-    suspend fun obtenerPorId(id: String): DispositivoEntity?
-
-    // Actualiza batería y estado de conexión cuando llega un mensaje MQTT de estado
-    @Query("UPDATE dispositivos SET bateria = :bateria, conectado = :conectado WHERE id = :id")
-    suspend fun actualizarEstado(id: String, bateria: Int?, conectado: Boolean)
 }
 </file>
 
@@ -7014,511 +7021,6 @@ private fun campoColores() = OutlinedTextFieldDefaults.colors(
 )
 </file>
 
-<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/Dispositivosscreen.kt">
-package com.utng.compasos_movil.ui.screens
-
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
-import com.utng.compasos_movil.DispositivosModule.DispositivoConUsuario
-import com.utng.compasos_movil.DispositivosModule.DispositivosViewModel
-import com.utng.compasos_movil.DispositivosModule.DispositivosViewModelFactory
-import com.utng.compasos_movil.DispositivosModule.EstadoVinculacion
-import com.utng.compasos_movil.data.dao.DispositivoDao
-import com.utng.compasos_movil.data.dao.UsuarioDao
-import com.utng.compasos_movil.data.entity.DispositivoEntity
-import com.utng.compasos_movil.ui.theme.CompaSOSColors
-import com.utng.compasos_movil.utils.SessionManager
-
-private val ExitoColor        = Color(0xFF4CAF50)
-private val BateriaMediaColor = Color(0xFFFFA726)
-private val BateriaBajaColor  = Color(0xFFE53935)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DispositivosScreen(
-    navController: NavController,
-    dispositivoDao: DispositivoDao,
-    usuarioDao: UsuarioDao
-) {
-    val context = LocalContext.current
-    val viewModel: DispositivosViewModel = viewModel(
-        factory = DispositivosViewModelFactory(
-            dispositivoDao = dispositivoDao,
-            usuarioDao     = usuarioDao,
-            sessionManager = SessionManager(context)
-        )
-    )
-    val uiState by viewModel.uiState.collectAsState()
-
-    Scaffold(
-        containerColor = CompaSOSColors.Background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Dispositivos",
-                            color      = CompaSOSColors.TextPrimary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        // Punto verde si MQTT está conectado
-                        if (uiState.mqttConectado) {
-                            Spacer(Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .background(ExitoColor, CircleShape)
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(
-                            Icons.Filled.ArrowBack,
-                            contentDescription = "Regresar",
-                            tint = CompaSOSColors.IconTint
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { navController.navigate(com.utng.compasos_movil.navigation.Screen.VincularTv.route) }) {
-                        Icon(
-                            Icons.Filled.Tv,
-                            contentDescription = "Vincular pantalla TV",
-                            tint = CompaSOSColors.AccentBlue
-                        )
-                    }
-                    IconButton(onClick = { viewModel.iniciarVinculacion() }) {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = "Vincular dispositivo",
-                            tint = CompaSOSColors.AccentBlue
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = CompaSOSColors.Background
-                )
-            )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(CompaSOSColors.Background)
-                .padding(padding)
-        ) {
-            when {
-                uiState.cargando -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = CompaSOSColors.AccentBlue)
-                    }
-                }
-
-                uiState.dispositivos.isEmpty() -> {
-                    EstadoSinDispositivos(
-                        modifier   = Modifier.align(Alignment.Center),
-                        onVincular = { viewModel.iniciarVinculacion() }
-                    )
-                }
-
-                else -> {
-                    LazyColumn(
-                        modifier        = Modifier.fillMaxSize(),
-                        contentPadding  = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(
-                            items = uiState.dispositivos,
-                            key   = { it.dispositivo.id }
-                        ) { item ->
-                            TarjetaDispositivo(item)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Diálogo de vinculación
-    val estado = uiState.estadoVinculacion
-    if (estado !is EstadoVinculacion.Inactivo) {
-        DialogVinculacion(
-            estado    = estado,
-            onCancelar = { viewModel.cancelarVinculacion() },
-            onCerrar   = { viewModel.cerrarDialogoVinculacion() }
-        )
-    }
-}
-
-// ============================================================
-// DIÁLOGO DE VINCULACIÓN
-// ============================================================
-
-@Composable
-private fun DialogVinculacion(
-    estado: EstadoVinculacion,
-    onCancelar: () -> Unit,
-    onCerrar: () -> Unit
-) {
-    Dialog(onDismissRequest = {
-        when (estado) {
-            is EstadoVinculacion.EsperandoWearOS -> onCancelar()
-            else                                 -> onCerrar()
-        }
-    }) {
-        Surface(shape = RoundedCornerShape(16.dp), color = CompaSOSColors.FieldBackground) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                when (estado) {
-                    is EstadoVinculacion.EsperandoWearOS ->
-                        ContenidoEsperando(codigo = estado.codigo, onCancelar = onCancelar)
-                    is EstadoVinculacion.Exitosa ->
-                        ContenidoExitoso(nombre = estado.nombreDispositivo, onCerrar = onCerrar)
-                    is EstadoVinculacion.Error ->
-                        ContenidoError(mensaje = estado.mensaje, onCerrar = onCerrar)
-                    is EstadoVinculacion.Inactivo -> Unit
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ContenidoEsperando(codigo: String, onCancelar: () -> Unit) {
-    Icon(
-        Icons.Filled.Watch,
-        contentDescription = null,
-        tint = CompaSOSColors.AccentBlue,
-        modifier = Modifier.size(40.dp)
-    )
-
-    Text(
-        "Vincular Wear OS",
-        fontSize   = 16.sp,
-        fontWeight = FontWeight.Bold,
-        color      = CompaSOSColors.TextPrimary
-    )
-
-    // Código grande y visible
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape    = RoundedCornerShape(12.dp),
-        color    = CompaSOSColors.Background
-    ) {
-        Text(
-            text          = codigo,
-            fontSize      = 36.sp,
-            fontWeight    = FontWeight.Bold,
-            fontFamily    = FontFamily.Monospace,
-            color         = CompaSOSColors.AccentBlue,
-            textAlign     = TextAlign.Center,
-            letterSpacing = 8.sp,
-            modifier      = Modifier.padding(vertical = 16.dp)
-        )
-    }
-
-    // Instrucciones
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        PasoInstruccion("1", "Abre CompaSOS en tu Wear OS")
-        PasoInstruccion("2", "Ve a \"Vincular dispositivo\"")
-        PasoInstruccion("3", "Ingresa el código de arriba")
-    }
-
-    // Indicador de espera
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        CircularProgressIndicator(
-            modifier    = Modifier.size(16.dp),
-            strokeWidth = 2.dp,
-            color       = CompaSOSColors.AccentBlue
-        )
-        Text(
-            "Esperando confirmación...",
-            fontSize = 12.sp,
-            color    = CompaSOSColors.TextSecondary
-        )
-    }
-
-    Button(
-        onClick  = onCancelar,
-        modifier = Modifier.fillMaxWidth(),
-        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.FieldBorder),
-        shape    = RoundedCornerShape(8.dp)
-    ) {
-        Text("Cancelar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun PasoInstruccion(numero: String, texto: String) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment     = Alignment.CenterVertically
-    ) {
-        Surface(
-            modifier = Modifier.size(20.dp),
-            shape    = CircleShape,
-            color    = CompaSOSColors.AccentBlue.copy(alpha = 0.2f)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    numero,
-                    fontSize   = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = CompaSOSColors.AccentBlue
-                )
-            }
-        }
-        Text(texto, fontSize = 12.sp, color = CompaSOSColors.TextSecondary)
-    }
-}
-
-@Composable
-private fun ContenidoExitoso(nombre: String, onCerrar: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .background(ExitoColor.copy(alpha = 0.15f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            Icons.Filled.CheckCircle,
-            contentDescription = null,
-            tint     = ExitoColor,
-            modifier = Modifier.size(30.dp)
-        )
-    }
-    Text(
-        "¡Vinculado correctamente!",
-        fontSize   = 16.sp,
-        fontWeight = FontWeight.Bold,
-        color      = CompaSOSColors.TextPrimary,
-        textAlign  = TextAlign.Center
-    )
-    Text(
-        nombre,
-        fontSize   = 14.sp,
-        fontWeight = FontWeight.SemiBold,
-        color      = CompaSOSColors.AccentBlue,
-        textAlign  = TextAlign.Center
-    )
-    Text(
-        "El dispositivo ya aparece en tu lista.",
-        fontSize  = 12.sp,
-        color     = CompaSOSColors.TextSecondary,
-        textAlign = TextAlign.Center
-    )
-    Button(
-        onClick  = onCerrar,
-        modifier = Modifier.fillMaxWidth(),
-        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue),
-        shape    = RoundedCornerShape(8.dp)
-    ) {
-        Text("Listo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun ContenidoError(mensaje: String, onCerrar: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .background(BateriaBajaColor.copy(alpha = 0.15f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            Icons.Filled.Error,
-            contentDescription = null,
-            tint     = BateriaBajaColor,
-            modifier = Modifier.size(30.dp)
-        )
-    }
-    Text(
-        "Error de vinculación",
-        fontSize   = 16.sp,
-        fontWeight = FontWeight.Bold,
-        color      = CompaSOSColors.TextPrimary,
-        textAlign  = TextAlign.Center
-    )
-    Text(mensaje, fontSize = 12.sp, color = CompaSOSColors.TextSecondary, textAlign = TextAlign.Center)
-    Button(
-        onClick  = onCerrar,
-        modifier = Modifier.fillMaxWidth(),
-        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.FieldBorder),
-        shape    = RoundedCornerShape(8.dp)
-    ) {
-        Text("Cerrar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-    }
-}
-
-// ============================================================
-// COMPOSABLES PRIVADOS (sin cambios de lógica)
-// ============================================================
-
-@Composable
-private fun EstadoSinDispositivos(modifier: Modifier = Modifier, onVincular: () -> Unit) {
-    Column(
-        modifier = modifier.padding(horizontal = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .background(CompaSOSColors.AccentBlue.copy(alpha = 0.12f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Filled.Watch,
-                contentDescription = null,
-                tint     = CompaSOSColors.AccentBlue,
-                modifier = Modifier.size(30.dp)
-            )
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "Sin dispositivos vinculados",
-            color      = CompaSOSColors.TextPrimary,
-            fontSize   = 15.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign  = TextAlign.Center
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Vincula un reloj o teléfono para empezar a monitorear.",
-            color     = CompaSOSColors.TextSecondary,
-            fontSize  = 12.sp,
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = onVincular,
-            colors  = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue),
-            shape   = RoundedCornerShape(8.dp)
-        ) {
-            Icon(Icons.Filled.Add, null, tint = CompaSOSColors.TextPrimary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Vincular dispositivo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-private fun TarjetaDispositivo(item: DispositivoConUsuario) {
-    val dispositivo   = item.dispositivo
-    val colorConexion = if (dispositivo.conectado) ExitoColor else CompaSOSColors.TextSecondary
-    val titulo = listOfNotNull(dispositivo.fabricante, dispositivo.modelo)
-        .joinToString(" ")
-        .ifBlank { dispositivo.tipo ?: "Dispositivo" }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(CompaSOSColors.FieldBackground)
-            .padding(14.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .background(CompaSOSColors.AccentBlue.copy(alpha = 0.15f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                iconoTipo(dispositivo.tipo),
-                contentDescription = null,
-                tint     = CompaSOSColors.AccentBlue,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(titulo, color = CompaSOSColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-
-            item.usuario?.let {
-                Spacer(Modifier.height(2.dp))
-                Text("De ${it.nombre}", color = CompaSOSColors.TextSecondary, fontSize = 12.sp)
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(6.dp).background(colorConexion, CircleShape))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (dispositivo.conectado) "Conectado" else "Desconectado",
-                    color      = colorConexion,
-                    fontSize   = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                dispositivo.bateria?.let { bateria ->
-                    val cb = colorBateria(bateria)
-                    Spacer(Modifier.width(10.dp))
-                    Icon(Icons.Filled.BatteryFull, null, tint = cb, modifier = Modifier.size(12.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("$bateria%", color = cb, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Vinculado desde ${dispositivo.fechaVinculacion}",
-                color    = CompaSOSColors.TextSecondary,
-                fontSize = 10.sp
-            )
-        }
-    }
-}
-
-private fun iconoTipo(tipo: String?): ImageVector = when (tipo?.trim()?.lowercase()) {
-    "reloj", "smartwatch", "watch"                           -> Icons.Filled.Watch
-    "telefono", "teléfono", "celular", "smartphone", "phone" -> Icons.Filled.Smartphone
-    "tablet"                                                  -> Icons.Filled.Tablet
-    else                                                      -> Icons.Filled.DeviceUnknown
-}
-
-private fun colorBateria(pct: Int): Color = when {
-    pct <= 20 -> BateriaBajaColor
-    pct <= 50 -> BateriaMediaColor
-    else      -> ExitoColor
-}
-</file>
-
 <file path="app/src/main/java/com/utng/compasos_movil/ui/screens/Historialubicacionesscreen.kt">
 package com.utng.compasos_movil.ui.screens
 
@@ -8309,6 +7811,173 @@ kotlin.code.style=official
 MAPBOX_DOWNLOADS_TOKEN=sk.eyJ1IjoiYW5keXNzMTIiLCJhIjoiY21zbHdiN2NiMTVtcTMzcHl5ZGZkYTNtbyJ9.CnFXAI6WTOLBE8ZSoAN0bg
 </file>
 
+<file path="README.md">
+# 🚨 CompaSOS
+
+## Información del Proyecto
+
+**Nombre del proyecto:** CompaSOS
+
+**Nombre de los estudiantes:** José Andrés Gutiérrez Vargas, Ana María Barrientos Guerrero
+
+**Grupo:** GIDS6093
+
+---
+
+# Beneficiario y problemática atendida
+
+El proyecto fue validado por **Saul Aguayo Arredondo**, Sub director de la **Escuela Secundaria Técnica No 26**.
+
+En una situación de emergencia (una caída, una descompensación de salud, un accidente doméstico o un riesgo en la vía pública) lo que determina el desenlace es el tiempo que transcurre entre el incidente y el momento en que alguien se entera. Actualmente ese aviso depende de una cadena frágil de condiciones: que la persona traiga el teléfono consigo, esté consciente, pueda desbloquearlo, ubique al contacto correcto y logre explicar dónde se encuentra. Basta con que una sola de esas condiciones falle para que la ayuda se retrase o no llegue.
+
+La problemática se agudiza en quienes pasan tiempo solos o dependen de un tercero: adultos mayores, personas con enfermedades crónicas o alguna discapacidad, y quienes se trasladan por zonas inseguras. Del otro lado, sus familiares y cuidadores no tienen una manera sencilla de saber si están bien sin llamar de forma constante, lo que impone una carga de vigilancia permanente que, aun así, no garantiza una reacción oportuna.
+
+A lo anterior se suma una limitación tecnológica de fondo: las alternativas disponibles viven en un solo dispositivo, casi siempre el teléfono, que es justamente el que no siempre está encima ni al alcance de la mano. No aprovechan el reloj inteligente que la persona porta durante todo el día, ni la televisión, que en muchos hogares —sobre todo donde hay adultos mayores— es la pantalla de mayor uso y la más fácil de operar. El resultado es una cobertura fragmentada que deja al usuario desprotegido precisamente en los momentos y lugares donde más necesita apoyo.
+
+CompaSOS atiende esta problemática con una aplicación multiplataforma (móvil Android, wearable Wear OS y pantalla inteligente) que asegura que la alerta de emergencia salga sin importar en cuál de los tres dispositivos se encuentre la persona.
+
+---
+
+# Objetivo
+
+Desarrollar una aplicación multiplataforma que permita brindar asistencia rápida en situaciones de emergencia mediante el envío de alertas, monitoreo de signos vitales y comunicación entre el módulo móvil, el wearable y la pantalla inteligente. El objetivo principal es mejorar la seguridad del usuario proporcionando herramientas que faciliten la solicitud de ayuda de forma inmediata, sin depender de un único dispositivo.
+
+---
+
+# Descripción de las funcionalidades
+
+El módulo móvil constituye el núcleo del sistema. Permite al usuario:
+
+- Registrar su perfil y su red de contactos de confianza, así como datos relevantes en caso de emergencia (tipo de sangre, padecimientos, medicamentos y alergias).
+- Activar la alerta SOS mediante una acción simple: botón en pantalla o presión sostenida del botón físico.
+- Enviar de forma automática la ubicación en tiempo real, la hora del incidente y un mensaje predefinido a todos los contactos registrados.
+- Mantener la app activa en segundo plano sin intervención del usuario, mediante un servicio dedicado.
+- Realizar marcación directa a servicios de emergencia.
+- Confirmar el estado de "estoy bien" y consultar el historial de eventos.
+- Acompañamiento y seguimiento en vivo de trayectos.
+- Funcionar como centro de configuración y sincronización del resto de los dispositivos (reloj y pantalla) vinculados a la cuenta.
+
+---
+
+# Tecnologías utilizadas
+
+## Lenguaje de programación
+
+- Kotlin
+
+## Frameworks y herramientas
+
+- Android Studio
+- Jetpack Compose
+- Room (base de datos local)
+- Servicios en segundo plano (Foreground Service)
+- Google Play Services / Ubicación
+- Material Design
+
+---
+
+# Instrucciones para ejecutar el proyecto
+
+## Requisitos
+
+- Android Studio Hedgehog o superior.
+- JDK 17.
+- Dispositivo o emulador Android.
+- Permisos de ubicación y notificaciones habilitados en el dispositivo de prueba.
+
+## Pasos
+
+1. Clonar el repositorio.
+
+```bash
+git clone -b dev https://github.com/gutierrezvargasandy1/CompaSOS_Movil.git
+```
+
+2. Abrir el proyecto en Android Studio.
+
+3. Sincronizar las dependencias de Gradle.
+
+4. Ejecutar la aplicación en un dispositivo o emulador Android.
+
+5. Conceder los permisos de ubicación y notificaciones solicitados por la app.
+
+6. Registrar un perfil y contactos de confianza para probar el envío de alertas SOS.
+
+---
+
+# Capturas de pantalla de la aplicación
+
+## Inicio de sesión
+
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/f8d96141-0763-43aa-aeed-d37c0fd17e42" />
+
+
+---
+
+## Registro de usuario
+
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/94db63ae-921d-4ec2-b580-6e07157aa831" />
+
+
+---
+
+## Alarma de emergencia
+
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/49470c80-2d4e-4aeb-a2c3-a7cddd41c73b" />
+
+
+---
+
+## Detalle de cuenta en aplicación
+
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/5c552515-56f1-49a7-8f17-659b7e9508dd" />
+
+
+
+---
+
+## Dispositivos vinculados
+
+<img width="210" height="500" alt="image" src="https://github.com/user-attachments/assets/de4ff045-91c3-42bd-b103-04367171ead4" />
+
+
+
+---
+
+# Estructura del proyecto
+
+```
+CompaSOS_Movil/
+├── app/
+│   └── src/main/java/com/utng/compasos_movil/
+│       ├── data/
+│       │   ├── dao/
+│       │   └── entity/
+│       ├── navigation/
+│       └── ui/
+│           ├── screens/
+│           └── theme/
+├── gradle/
+└── README.md
+```
+
+---
+
+# Autores
+
+**José Andrés Gutiérrez Vargas**
+
+**Ana María Barrientos Guerrero**
+
+**Grupo:** GIDS6093
+
+---
+
+# Licencia
+
+Proyecto desarrollado con fines académicos para la Universidad Tecnológica del Norte de Guanajuato.
+</file>
+
 <file path="settings.gradle.kts">
 pluginManagement {
     repositories {
@@ -8345,6 +8014,24 @@ rootProject.name = "CompaSOS_Movil"
 include(":app")
 </file>
 
+<file path="app/src/main/java/com/utng/compasos_movil/config/MqttConfig.kt">
+package com.utng.compasos_movil.config
+
+object MqttConfig {
+    const val BROKER_URL = "tcp://192.168.1.102:1883"
+
+    const val TIMEOUT_CONEXION = 10
+    const val KEEP_ALIVE       = 60
+    const val QOS              = 1
+
+    const val TOPIC_VINCULACION = "compasos/vinculacion"
+    const val TOPIC_DISPOSITIVO = "compasos/dispositivo"
+    const val TOPIC_ALERTA      = "compasos/alerta"   // ← NUEVO
+    const val TOPIC_FAMILIA     = "compasos/familia"  // ← NUEVO
+    const val TOPIC_TV          = "compasos/tv"          // ← Agregado para la TV
+}
+</file>
+
 <file path="app/src/main/java/com/utng/compasos_movil/data/dao/AlertaDao.kt">
 package com.utng.compasos_movil.data.dao
 
@@ -8371,6 +8058,43 @@ interface AlertaDao {
 
     @Query("SELECT * FROM alertas WHERE usuarioId = :usuarioId ORDER BY fecha DESC")
     suspend fun obtenerPorUsuario(usuarioId: String): List<AlertaEntity>
+}
+</file>
+
+<file path="app/src/main/java/com/utng/compasos_movil/data/dao/DispositivoDao.kt">
+package com.utng.compasos_movil.data.dao
+
+import androidx.room3.Dao
+import androidx.room3.Insert
+import androidx.room3.Query
+import com.utng.compasos_movil.data.entity.DispositivoEntity
+
+@Dao
+interface DispositivoDao {
+
+    @Insert
+    suspend fun insertar(dispositivo: DispositivoEntity)
+
+    @Query("SELECT * FROM dispositivos")
+    suspend fun obtenerTodos(): List<DispositivoEntity>
+
+    @Query("SELECT * FROM dispositivos WHERE usuarioId = :usuarioId")
+    suspend fun obtenerPorUsuario(usuarioId: String): List<DispositivoEntity>
+
+    @Query("SELECT * FROM dispositivos WHERE id = :id")
+    suspend fun obtenerPorId(id: String): DispositivoEntity?
+
+    // Actualiza batería y estado de conexión cuando llega un mensaje MQTT de estado
+    @Query("UPDATE dispositivos SET bateria = :bateria, conectado = :conectado WHERE id = :id")
+    suspend fun actualizarEstado(id: String, bateria: Int?, conectado: Boolean)
+
+    @Query("""
+    SELECT * FROM dispositivos
+    WHERE tipo = 'tv'
+      AND usuarioId = :userId
+      AND conectado = 1
+""")
+    suspend fun obtenerTvsVinculados(userId: String): List<DispositivoEntity>
 }
 </file>
 
@@ -8568,663 +8292,508 @@ abstract class AppDatabase : RoomDatabase() {
 }
 </file>
 
-<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/Dashboardscreen.kt">
+<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/Dispositivosscreen.kt">
 package com.utng.compasos_movil.ui.screens
 
-import android.annotation.SuppressLint
-import android.app.Application
-import android.util.Log
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.mapbox.common.MapboxOptions
-import com.mapbox.geojson.Point
-import com.mapbox.maps.MapboxExperimental
-import com.mapbox.maps.Style
-import com.mapbox.maps.extension.compose.MapboxMap
-import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
-import com.mapbox.maps.extension.compose.style.MapStyle
-import com.utng.compasos_movil.AlertaPhoneRepository.AlertaPhoneRepository
-import com.utng.compasos_movil.config.MqttConfig
-import com.utng.compasos_movil.config.MqttManager
-import com.utng.compasos_movil.data.AppDatabase
-import com.utng.compasos_movil.navigation.Screen
-import com.utng.compasos_movil.ui.screens.molals.MenuLateralContent
-import com.utng.compasos_movil.ui.screens.molals.MenuUsuario
+import com.utng.compasos_movil.DispositivosModule.DispositivoConUsuario
+import com.utng.compasos_movil.DispositivosModule.DispositivosViewModel
+import com.utng.compasos_movil.DispositivosModule.DispositivosViewModelFactory
+import com.utng.compasos_movil.DispositivosModule.EstadoVinculacion
+import com.utng.compasos_movil.data.dao.DispositivoDao
+import com.utng.compasos_movil.data.dao.UsuarioDao
+import com.utng.compasos_movil.data.entity.DispositivoEntity
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
 
-private val EmergenciaColor      = Color(0xFFE53935)
-private val EmergenciaColorClaro = Color(0xFFFF6F61)
-private val ExitoColor           = Color(0xFF4CAF50)
-
-private const val DURACION_HOLD_MS = 2000
-private const val PASOS_HOLD       = 40
-
-// ── ViewModel ─────────────────────────────────────────────────────────────────
-
-// ── ViewModel ─────────────────────────────────────────────────────────────────
-
-class DashboardViewModel(
-    application: Application,
-    private val sessionManager: SessionManager
-) : AndroidViewModel(application) {
-
-    private val db = AppDatabase.getInstance(application)
-
-    // ✅ El repositorio ya tiene todo: Room, ubicación, notificación a familiares
-    private val repository = AlertaPhoneRepository(
-        alertaDao = db.alertaDao(),
-        ubicacionDao = db.ubicacionDao(),
-        audioDao = db.audioDao(),
-        notificacionDao = db.notificacionDao(),
-        familiaUsuarioDao = db.familiaUsuarioDao(),
-        sessionManager = sessionManager,
-        context = application
-    )
-
-    private val _relojConectado  = MutableStateFlow(false)
-    val relojConectado: StateFlow<Boolean> = _relojConectado.asStateFlow()
-
-    private val _alertaEnviadaId = MutableStateFlow<String?>(null)
-    val alertaEnviadaId: StateFlow<String?> = _alertaEnviadaId.asStateFlow()
-
-    init { verificarReloj() }
-
-    private fun verificarReloj() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val userId  = sessionManager.obtenerUsuarioId() ?: return@launch
-            val alertas = db.alertaDao().obtenerPorUsuario(userId)
-            _relojConectado.value =
-                alertas.any { it.dispositivoId?.startsWith("wear_") == true }
-        }
-    }
-
-    fun dispararSOS() {
-        viewModelScope.launch {
-            // Crea la alerta en Room, obtiene ubicación del teléfono
-            // y notifica a los familiares — todo sin pasar por el broker
-            val alerta = repository.crearSOSDesdeMovil() ?: return@launch
-            // Inicia rastreo continuo de ubicación
-            repository.iniciarRastreoEnVivo(alerta.id, viewModelScope)
-            _alertaEnviadaId.value = alerta.id
-        }
-    }
-
-    fun consumirAlertaEnviada() { _alertaEnviadaId.value = null }
-
-    class Factory(
-        private val app:            Application,
-        private val sessionManager: SessionManager
-    ) : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            DashboardViewModel(app, sessionManager) as T
-    }
-}
-
-// ── Screen ────────────────────────────────────────────────────────────────────
+private val ExitoColor        = Color(0xFF4CAF50)
+private val BateriaMediaColor = Color(0xFFFFA726)
+private val BateriaBajaColor  = Color(0xFFE53935)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen(
-    navController:  NavController,
-    usuario:        MenuUsuario,
-    latitud:        Double = 21.1619,
-    longitud:       Double = -101.1925,
-    sessionManager: SessionManager,
-    onCerrarSesion: () -> Unit = {}
+fun DispositivosScreen(
+    navController: NavController,
+    dispositivoDao: DispositivoDao,
+    usuarioDao: UsuarioDao
 ) {
     val context = LocalContext.current
-    val vm: DashboardViewModel = viewModel(
-        factory = DashboardViewModel.Factory(
-            app            = context.applicationContext as Application,
-            sessionManager = sessionManager
+    val viewModel: DispositivosViewModel = viewModel(
+        factory = DispositivosViewModelFactory(
+            dispositivoDao = dispositivoDao,
+            usuarioDao     = usuarioDao,
+            sessionManager = SessionManager(context)
         )
     )
+    val uiState by viewModel.uiState.collectAsState()
 
-    val relojConectado  by vm.relojConectado.collectAsState()
-    val alertaEnviadaId by vm.alertaEnviadaId.collectAsState()
-
-    val drawerState       = rememberDrawerState(DrawerValue.Closed)
-    val scope             = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
-    var opcionActual      by remember { mutableStateOf<String?>(null) }
-    var anchoMenu         by remember { mutableStateOf(0.dp) }
-    val density           = LocalDensity.current
-
-    var mostrarConfirmacion by remember { mutableStateOf(false) }
-    var tiempoRestante      by remember { mutableIntStateOf(5) }
-
-    LaunchedEffect(mostrarConfirmacion) {
-        if (mostrarConfirmacion) {
-            tiempoRestante = 5
-            repeat(5) {
-                delay(1_000L)
-                tiempoRestante--
-            }
-            if (mostrarConfirmacion) {
-                mostrarConfirmacion = false
-                vm.dispararSOS()
-            }
-        }
-    }
-
-    LaunchedEffect(alertaEnviadaId) {
-        if (alertaEnviadaId != null) {
-            snackbarHostState.showSnackbar("✓ Alerta enviada a tus familiares")
-            vm.consumirAlertaEnviada()
-        }
-    }
-
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
-    }
-
-    fun navegarDesdeMenu(opcion: String) {
-        scope.launch { drawerState.close() }
-        opcionActual = opcion
-        when (opcion) {
-            "Contactos de emergencia"  -> navController.navigate(Screen.ContactosEmergencia.route)
-            "Familia"                  -> navController.navigate(Screen.Familia.route)
-            "Dispositivos"             -> navController.navigate(Screen.Dispositivos.route)
-            "Historial de ubicaciones" -> navController.navigate(Screen.HistorialUbicaciones.route)
-            "Notificaciones"           -> navController.navigate(Screen.Notificaciones.route)
-            "Configuración"            -> navController.navigate(Screen.Configuracion.route)
-            "Alertas de familiares"    -> navController.navigate(Screen.AlertasRecibidas.route)
-        }
-    }
-
-    if (mostrarConfirmacion) {
-        SOSConfirmacionDialog(
-            tiempoRestante = tiempoRestante,
-            onEnviarAhora  = {
-                mostrarConfirmacion = false
-                vm.dispararSOS()
-            },
-            onCancelar = { mostrarConfirmacion = false }
-        )
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        ModalNavigationDrawer(
-            drawerState     = drawerState,
-            gesturesEnabled = false,
-            drawerContent   = {
-                ModalDrawerSheet(
-                    drawerContainerColor = CompaSOSColors.Background,
-                    modifier = Modifier.onGloballyPositioned { coords ->
-                        anchoMenu = with(density) { coords.size.width.toDp() }
-                    }
-                ) {
-                    MenuLateralContent(
-                        usuario              = usuario,
-                        opcionSeleccionada   = opcionActual,
-                        onOpcionSeleccionada = ::navegarDesdeMenu,
-                        onCerrarSesion = {
-                            scope.launch { drawerState.close() }
-                            onCerrarSesion()
-                        },
-                        onEditarPerfil = {
-                            scope.launch { drawerState.close() }
-                            navController.navigate(Screen.Perfil.route)
-                        }
-                    )
-                }
-            }
-        ) {
-            Scaffold(
-                containerColor = CompaSOSColors.Background,
-                snackbarHost   = { SnackbarHost(snackbarHostState) },
-                topBar = {
-                    TopAppBar(
-                        title = {
-                            Text(
-                                "CompaSOS",
-                                color      = CompaSOSColors.TextPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = {
-                                scope.launch {
-                                    if (drawerState.isOpen) drawerState.close()
-                                    else drawerState.open()
-                                }
-                            }) {
-                                Icon(
-                                    if (drawerState.isOpen) Icons.Filled.Close else Icons.Filled.Menu,
-                                    contentDescription = null,
-                                    tint = CompaSOSColors.IconTint
-                                )
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = CompaSOSColors.Background
+    Scaffold(
+        containerColor = CompaSOSColors.Background,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Dispositivos",
+                            color      = CompaSOSColors.TextPrimary,
+                            fontWeight = FontWeight.Bold
                         )
-                    )
-                }
-            ) { padding ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(CompaSOSColors.Background)
-                        .padding(padding)
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
-                ) {
-                    Text(
-                        text       = "Hola, ${usuario.nombreCompleto.substringBefore(" ")}",
-                        color      = CompaSOSColors.TextPrimary,
-                        fontSize   = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text     = "Todo está tranquilo por ahora",
-                        color    = CompaSOSColors.TextSecondary,
-                        fontSize = 13.sp
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-                    EstadoDispositivos(relojConectado = relojConectado)
-
-                    Spacer(Modifier.height(16.dp))
-                    MapaUbicacion(
-                        latitud  = latitud,
-                        longitud = longitud,
-                        modifier = Modifier.fillMaxWidth().height(220.dp)
-                    )
-
-                    Box(
-                        modifier         = Modifier.fillMaxWidth().weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        BotonPanico(onActivarPanico = { mostrarConfirmacion = true })
+                        // Punto verde si MQTT está conectado
+                        if (uiState.mqttConectado) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(ExitoColor, CircleShape)
+                            )
+                        }
                     }
-
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-        }
-
-        if (drawerState.isOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = anchoMenu)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication        = null
-                    ) { scope.launch { drawerState.close() } }
-            )
-        }
-    }
-}
-
-// ── SOSConfirmacionDialog ─────────────────────────────────────────────────────
-
-@Composable
-private fun SOSConfirmacionDialog(
-    tiempoRestante: Int,
-    onEnviarAhora:  () -> Unit,
-    onCancelar:     () -> Unit
-) {
-    Dialog(onDismissRequest = onCancelar) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = CompaSOSColors.FieldBackground
-        ) {
-            Column(
-                modifier            = Modifier.fillMaxWidth().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .background(EmergenciaColor.copy(alpha = 0.15f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        tint     = EmergenciaColor,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                Text(
-                    text       = "¿Activar alerta de emergencia?",
-                    color      = CompaSOSColors.TextPrimary,
-                    fontSize   = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign  = TextAlign.Center
+                },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Regresar",
+                            tint = CompaSOSColors.IconTint
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { navController.navigate(com.utng.compasos_movil.navigation.Screen.VincularTv.route) }) {
+                        Icon(
+                            Icons.Filled.Tv,
+                            contentDescription = "Vincular pantalla TV",
+                            tint = CompaSOSColors.AccentBlue
+                        )
+                    }
+                    IconButton(onClick = { viewModel.iniciarVinculacion() }) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "Vincular dispositivo",
+                            tint = CompaSOSColors.AccentBlue
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = CompaSOSColors.Background
                 )
-
-                Text(
-                    text      = "Se notificará a todos tus familiares con tu ubicación en tiempo real.",
-                    color     = CompaSOSColors.TextSecondary,
-                    fontSize  = 13.sp,
-                    textAlign = TextAlign.Center
-                )
-
-                Box(
-                    modifier         = Modifier.size(80.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        progress    = { tiempoRestante / 5f },
-                        modifier    = Modifier.fillMaxSize(),
-                        color       = EmergenciaColor,
-                        trackColor  = EmergenciaColor.copy(alpha = 0.15f),
-                        strokeWidth = 6.dp
-                    )
-                    Text(
-                        text       = "$tiempoRestante",
-                        color      = EmergenciaColor,
-                        fontSize   = 28.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-
-                Text(
-                    text     = "Enviando automáticamente en $tiempoRestante s",
-                    color    = CompaSOSColors.TextSecondary,
-                    fontSize = 11.sp
-                )
-
-                Spacer(Modifier.height(4.dp))
-
-                OutlinedButton(
-                    onClick  = onCancelar,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape    = RoundedCornerShape(10.dp),
-                    colors   = ButtonDefaults.outlinedButtonColors(
-                        contentColor = CompaSOSColors.TextPrimary
-                    )
-                ) {
-                    Text("Cancelar — no es emergencia", fontWeight = FontWeight.SemiBold)
-                }
-
-                Button(
-                    onClick  = onEnviarAhora,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape    = RoundedCornerShape(10.dp),
-                    colors   = ButtonDefaults.buttonColors(containerColor = EmergenciaColor)
-                ) {
-                    Text("Enviar ahora", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-// ── EstadoDispositivos ────────────────────────────────────────────────────────
-
-@Composable
-private fun EstadoDispositivos(relojConectado: Boolean) {
-    EstadoPill(
-        icono = Icons.Filled.Watch,
-        texto = if (relojConectado) "Reloj vinculado" else "Sin reloj vinculado",
-        color = if (relojConectado) ExitoColor else CompaSOSColors.TextSecondary
-    )
-}
-
-@Composable
-private fun EstadoPill(icono: ImageVector, texto: String, color: Color) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .background(color.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Icon(icono, contentDescription = null, tint = color, modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(texto, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-// ── MapaUbicacion ─────────────────────────────────────────────────────────────
-
-@SuppressLint("RememberReturnType")
-@OptIn(MapboxExperimental::class)
-@Composable
-private fun MapaUbicacion(
-    latitud:  Double,
-    longitud: Double,
-    modifier: Modifier = Modifier,
-    zoom:     Double   = 15.0
-) {
-    remember {
-        MapboxOptions.accessToken =
-            "pk.eyJ1IjoiYW5keXNzMTIiLCJhIjoiY21zbHVtYmJkMTh6YTJ4b29zb25pcjMzOSJ9.388hSDi65h3MrNr5v-rSgQ"
-    }
-
-    val mapViewportState = rememberMapViewportState {
-        setCameraOptions {
-            center(Point.fromLngLat(longitud, latitud))
-            zoom(zoom)
-        }
-    }
-
-    LaunchedEffect(latitud, longitud, zoom) {
-        mapViewportState.setCameraOptions {
-            center(Point.fromLngLat(longitud, latitud))
-            zoom(zoom)
-        }
-    }
-
-    Column(modifier = modifier) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier          = Modifier.align(Alignment.End).padding(bottom = 8.dp)
-        ) {
-            Box(modifier = Modifier.size(6.dp).background(ExitoColor, CircleShape))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "En vivo",
-                color      = CompaSOSColors.TextSecondary,
-                fontSize   = 11.sp,
-                fontWeight = FontWeight.Medium
             )
         }
-
-        Box(
-            modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(20.dp))
-        ) {
-            MapboxMap(
-                modifier         = Modifier.fillMaxSize(),
-                mapViewportState = mapViewportState,
-                scaleBar         = {},
-                style            = { MapStyle(style = Style.DARK) }
-            )
-            PuntoUbicacionActual(
-                color    = CompaSOSColors.AccentBlue,
-                modifier = Modifier.align(Alignment.Center)
-            )
-            Text(
-                text       = "%.4f, %.4f".format(latitud, longitud),
-                color      = Color.White,
-                fontSize   = 11.sp,
-                fontWeight = FontWeight.Medium,
-                modifier   = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(12.dp)
-                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun PuntoUbicacionActual(color: Color, modifier: Modifier = Modifier) {
-    val transition  = rememberInfiniteTransition(label = "pulso_gps")
-    val escalaPulso by transition.animateFloat(
-        initialValue  = 0.4f,
-        targetValue   = 1f,
-        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
-        label         = "escala_pulso_gps"
-    )
-    val alfaPulso by transition.animateFloat(
-        initialValue  = 0.45f,
-        targetValue   = 0f,
-        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
-        label         = "alfa_pulso_gps"
-    )
-
-    Box(modifier = modifier.size(54.dp), contentAlignment = Alignment.Center) {
+    ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer(scaleX = escalaPulso, scaleY = escalaPulso, alpha = alfaPulso)
-                .background(color, CircleShape)
-        )
-        Box(
-            modifier = Modifier
-                .size(18.dp)
-                .shadow(4.dp, CircleShape)
-                .background(Color.White, CircleShape),
-            contentAlignment = Alignment.Center
+                .background(CompaSOSColors.Background)
+                .padding(padding)
         ) {
-            Box(modifier = Modifier.size(11.dp).background(color, CircleShape))
+            when {
+                uiState.cargando -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CompaSOSColors.AccentBlue)
+                    }
+                }
+
+                uiState.dispositivos.isEmpty() -> {
+                    EstadoSinDispositivos(
+                        modifier   = Modifier.align(Alignment.Center),
+                        onVincular = { viewModel.iniciarVinculacion() }
+                    )
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier        = Modifier.fillMaxSize(),
+                        contentPadding  = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = uiState.dispositivos,
+                            key   = { it.dispositivo.id }
+                        ) { item ->
+                            TarjetaDispositivo(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Diálogo de vinculación
+    val estado = uiState.estadoVinculacion
+    if (estado !is EstadoVinculacion.Inactivo) {
+        DialogVinculacion(
+            estado    = estado,
+            onCancelar = { viewModel.cancelarVinculacion() },
+            onCerrar   = { viewModel.cerrarDialogoVinculacion() }
+        )
+    }
+}
+
+// ============================================================
+// DIÁLOGO DE VINCULACIÓN
+// ============================================================
+
+@Composable
+private fun DialogVinculacion(
+    estado: EstadoVinculacion,
+    onCancelar: () -> Unit,
+    onCerrar: () -> Unit
+) {
+    Dialog(onDismissRequest = {
+        when (estado) {
+            is EstadoVinculacion.EsperandoWearOS -> onCancelar()
+            else                                 -> onCerrar()
+        }
+    }) {
+        Surface(shape = RoundedCornerShape(16.dp), color = CompaSOSColors.FieldBackground) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (estado) {
+                    is EstadoVinculacion.EsperandoWearOS ->
+                        ContenidoEsperando(codigo = estado.codigo, onCancelar = onCancelar)
+                    is EstadoVinculacion.Exitosa ->
+                        ContenidoExitoso(nombre = estado.nombreDispositivo, onCerrar = onCerrar)
+                    is EstadoVinculacion.Error ->
+                        ContenidoError(mensaje = estado.mensaje, onCerrar = onCerrar)
+                    is EstadoVinculacion.Inactivo -> Unit
+                }
+            }
         }
     }
 }
 
-// ── BotonPanico ───────────────────────────────────────────────────────────────
-
 @Composable
-private fun BotonPanico(onActivarPanico: () -> Unit) {
-    var presionando by remember { mutableStateOf(false) }
-    var progreso    by remember { mutableStateOf(0f) }
-
-    val infiniteTransition = rememberInfiniteTransition(label = "pulso_panico")
-    val escala by infiniteTransition.animateFloat(
-        initialValue  = 1f,
-        targetValue   = 1.06f,
-        animationSpec = infiniteRepeatable(tween(1000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label         = "escala"
+private fun ContenidoEsperando(codigo: String, onCancelar: () -> Unit) {
+    Icon(
+        Icons.Filled.Watch,
+        contentDescription = null,
+        tint = CompaSOSColors.AccentBlue,
+        modifier = Modifier.size(40.dp)
     )
 
-    LaunchedEffect(presionando) {
-        if (presionando) {
-            val pasoMs = (DURACION_HOLD_MS / PASOS_HOLD).toLong()
-            for (paso in 1..PASOS_HOLD) {
-                delay(pasoMs)
-                if (!presionando) { progreso = 0f; return@LaunchedEffect }
-                progreso = paso / PASOS_HOLD.toFloat()
-            }
-            onActivarPanico()
-            presionando = false
-            progreso    = 0f
-        } else {
-            progreso = 0f
-        }
+    Text(
+        "Vincular Wear OS",
+        fontSize   = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color      = CompaSOSColors.TextPrimary
+    )
+
+    // Código grande y visible
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape    = RoundedCornerShape(12.dp),
+        color    = CompaSOSColors.Background
+    ) {
+        Text(
+            text          = codigo,
+            fontSize      = 36.sp,
+            fontWeight    = FontWeight.Bold,
+            fontFamily    = FontFamily.Monospace,
+            color         = CompaSOSColors.AccentBlue,
+            textAlign     = TextAlign.Center,
+            letterSpacing = 8.sp,
+            modifier      = Modifier.padding(vertical = 16.dp)
+        )
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val diametroAnillo  = min(min(maxWidth, maxHeight) * 0.62f, 190.dp)
-        val diametroCirculo = diametroAnillo * 0.84f
+    // Instrucciones
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        PasoInstruccion("1", "Abre CompaSOS en tu Wear OS")
+        PasoInstruccion("2", "Ve a \"Vincular dispositivo\"")
+        PasoInstruccion("3", "Ingresa el código de arriba")
+    }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    // Indicador de espera
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CircularProgressIndicator(
+            modifier    = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color       = CompaSOSColors.AccentBlue
+        )
+        Text(
+            "Esperando confirmación...",
+            fontSize = 12.sp,
+            color    = CompaSOSColors.TextSecondary
+        )
+    }
+
+    Button(
+        onClick  = onCancelar,
+        modifier = Modifier.fillMaxWidth(),
+        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.FieldBorder),
+        shape    = RoundedCornerShape(8.dp)
+    ) {
+        Text("Cancelar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun PasoInstruccion(numero: String, texto: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment     = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(20.dp),
+            shape    = CircleShape,
+            color    = CompaSOSColors.AccentBlue.copy(alpha = 0.2f)
+        ) {
             Box(contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(
-                    progress    = { progreso },
-                    modifier    = Modifier.size(diametroAnillo),
-                    color       = EmergenciaColor,
-                    trackColor  = EmergenciaColor.copy(alpha = 0.15f),
-                    strokeWidth = 5.dp
+                Text(
+                    numero,
+                    fontSize   = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color      = CompaSOSColors.AccentBlue
                 )
-                Box(
-                    modifier = Modifier
-                        .size(diametroCirculo)
-                        .graphicsLayer(scaleX = escala, scaleY = escala)
-                        .shadow(
-                            24.dp, CircleShape,
-                            ambientColor = EmergenciaColor,
-                            spotColor    = EmergenciaColor
-                        )
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(EmergenciaColorClaro, EmergenciaColor),
-                                radius = 170f
-                            ),
-                            CircleShape
-                        )
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = {
-                                    presionando = true
-                                    tryAwaitRelease()
-                                    presionando = false
-                                }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "SOS",
-                        color      = Color.White,
-                        fontSize   = 36.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+            }
+        }
+        Text(texto, fontSize = 12.sp, color = CompaSOSColors.TextSecondary)
+    }
+}
+
+@Composable
+private fun ContenidoExitoso(nombre: String, onCerrar: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .background(ExitoColor.copy(alpha = 0.15f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint     = ExitoColor,
+            modifier = Modifier.size(30.dp)
+        )
+    }
+    Text(
+        "¡Vinculado correctamente!",
+        fontSize   = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color      = CompaSOSColors.TextPrimary,
+        textAlign  = TextAlign.Center
+    )
+    Text(
+        nombre,
+        fontSize   = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        color      = CompaSOSColors.AccentBlue,
+        textAlign  = TextAlign.Center
+    )
+    Text(
+        "El dispositivo ya aparece en tu lista.",
+        fontSize  = 12.sp,
+        color     = CompaSOSColors.TextSecondary,
+        textAlign = TextAlign.Center
+    )
+    Button(
+        onClick  = onCerrar,
+        modifier = Modifier.fillMaxWidth(),
+        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue),
+        shape    = RoundedCornerShape(8.dp)
+    ) {
+        Text("Listo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ContenidoError(mensaje: String, onCerrar: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .background(BateriaBajaColor.copy(alpha = 0.15f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Filled.Error,
+            contentDescription = null,
+            tint     = BateriaBajaColor,
+            modifier = Modifier.size(30.dp)
+        )
+    }
+    Text(
+        "Error de vinculación",
+        fontSize   = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color      = CompaSOSColors.TextPrimary,
+        textAlign  = TextAlign.Center
+    )
+    Text(mensaje, fontSize = 12.sp, color = CompaSOSColors.TextSecondary, textAlign = TextAlign.Center)
+    Button(
+        onClick  = onCerrar,
+        modifier = Modifier.fillMaxWidth(),
+        colors   = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.FieldBorder),
+        shape    = RoundedCornerShape(8.dp)
+    ) {
+        Text("Cerrar", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+    }
+}
+
+// ============================================================
+// COMPOSABLES PRIVADOS (sin cambios de lógica)
+// ============================================================
+
+@Composable
+private fun EstadoSinDispositivos(modifier: Modifier = Modifier, onVincular: () -> Unit) {
+    Column(
+        modifier = modifier.padding(horizontal = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .background(CompaSOSColors.AccentBlue.copy(alpha = 0.12f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.Watch,
+                contentDescription = null,
+                tint     = CompaSOSColors.AccentBlue,
+                modifier = Modifier.size(30.dp)
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Sin dispositivos vinculados",
+            color      = CompaSOSColors.TextPrimary,
+            fontSize   = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign  = TextAlign.Center
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Vincula un reloj o teléfono para empezar a monitorear.",
+            color     = CompaSOSColors.TextSecondary,
+            fontSize  = 12.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onVincular,
+            colors  = ButtonDefaults.buttonColors(containerColor = CompaSOSColors.AccentBlue),
+            shape   = RoundedCornerShape(8.dp)
+        ) {
+            Icon(Icons.Filled.Add, null, tint = CompaSOSColors.TextPrimary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Vincular dispositivo", color = CompaSOSColors.TextPrimary, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TarjetaDispositivo(item: DispositivoConUsuario) {
+    val dispositivo   = item.dispositivo
+    val colorConexion = if (dispositivo.conectado) ExitoColor else CompaSOSColors.TextSecondary
+    val titulo = listOfNotNull(dispositivo.fabricante, dispositivo.modelo)
+        .joinToString(" ")
+        .ifBlank { dispositivo.tipo ?: "Dispositivo" }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(CompaSOSColors.FieldBackground)
+            .padding(14.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .background(CompaSOSColors.AccentBlue.copy(alpha = 0.15f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                iconoTipo(dispositivo.tipo),
+                contentDescription = null,
+                tint     = CompaSOSColors.AccentBlue,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(titulo, color = CompaSOSColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+
+            item.usuario?.let {
+                Spacer(Modifier.height(2.dp))
+                Text("De ${it.nombre}", color = CompaSOSColors.TextSecondary, fontSize = 12.sp)
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(6.dp).background(colorConexion, CircleShape))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (dispositivo.conectado) "Conectado" else "Desconectado",
+                    color      = colorConexion,
+                    fontSize   = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                dispositivo.bateria?.let { bateria ->
+                    val cb = colorBateria(bateria)
+                    Spacer(Modifier.width(10.dp))
+                    Icon(Icons.Filled.BatteryFull, null, tint = cb, modifier = Modifier.size(12.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("$bateria%", color = cb, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            Spacer(Modifier.height(14.dp))
+
+            Spacer(Modifier.height(4.dp))
             Text(
-                text      = "Mantén presionado 2 segundos para activar",
-                color     = CompaSOSColors.TextSecondary,
-                fontSize  = 12.sp,
-                textAlign = TextAlign.Center
+                "Vinculado desde ${dispositivo.fechaVinculacion}",
+                color    = CompaSOSColors.TextSecondary,
+                fontSize = 10.sp
             )
         }
     }
+}
+
+private fun iconoTipo(tipo: String?): ImageVector = when (tipo?.trim()?.lowercase()) {
+    "reloj", "smartwatch", "watch"                           -> Icons.Filled.Watch
+    "telefono", "teléfono", "celular", "smartphone", "phone" -> Icons.Filled.Smartphone
+    "tablet"                                                  -> Icons.Filled.Tablet
+    else                                                      -> Icons.Filled.DeviceUnknown
+}
+
+private fun colorBateria(pct: Int): Color = when {
+    pct <= 20 -> BateriaBajaColor
+    pct <= 50 -> BateriaMediaColor
+    else      -> ExitoColor
 }
 </file>
 
@@ -10541,31 +10110,664 @@ interface UsuarioDao {
 }
 </file>
 
-<file path="app/src/main/java/com/utng/compasos_movil/navigation/Screen.kt">
-package com.utng.compasos_movil.navigation
+<file path="app/src/main/java/com/utng/compasos_movil/ui/screens/Dashboardscreen.kt">
+package com.utng.compasos_movil.ui.screens
 
-sealed class Screen(val route: String) {
-    object Login                : Screen("login")
-    object Registro             : Screen("registro")
-    object PerfilMedico         : Screen("perfil_medico")
-    object Dashboard            : Screen("dashboard")
-    object ContactosEmergencia  : Screen("contactos_emergencia")
-    object Familia              : Screen("familia")
-    object Dispositivos         : Screen("dispositivos")
-    object HistorialUbicaciones : Screen("historial_ubicaciones")
-    object Notificaciones       : Screen("notificaciones")
-    object Configuracion        : Screen("configuracion")
-    object Perfil               : Screen("perfil")
-    object EditarPerfil         : Screen("editar_perfil")
+import android.annotation.SuppressLint
+import android.app.Application
+import android.util.Log
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.*
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import com.mapbox.common.MapboxOptions
+import com.mapbox.geojson.Point
+import com.mapbox.maps.MapboxExperimental
+import com.mapbox.maps.Style
+import com.mapbox.maps.extension.compose.MapboxMap
+import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
+import com.mapbox.maps.extension.compose.style.MapStyle
+import com.utng.compasos_movil.AlertaPhoneRepository.AlertaPhoneRepository
+import com.utng.compasos_movil.config.MqttConfig
+import com.utng.compasos_movil.config.MqttManager
+import com.utng.compasos_movil.data.AppDatabase
+import com.utng.compasos_movil.navigation.Screen
+import com.utng.compasos_movil.ui.screens.molals.MenuLateralContent
+import com.utng.compasos_movil.ui.screens.molals.MenuUsuario
+import com.utng.compasos_movil.ui.theme.CompaSOSColors
+import com.utng.compasos_movil.utils.SessionManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
 
-    object AlertasRecibidas : Screen("alertas_recibidas")
-    object VincularTv : Screen("vincular_tv")
+private val EmergenciaColor      = Color(0xFFE53935)
+private val EmergenciaColorClaro = Color(0xFFFF6F61)
+private val ExitoColor           = Color(0xFF4CAF50)
 
-    // ← nuevo: pantalla detalle de alerta (desde notificación o lista)
-    object AlertaDetalle : Screen("alertaDetalle/{alertaId}") {
-        fun crearRuta(alertaId: String) = "alertaDetalle/$alertaId"
+private const val DURACION_HOLD_MS = 2000
+private const val PASOS_HOLD       = 40
+
+// ── ViewModel ─────────────────────────────────────────────────────────────────
+
+// ── ViewModel ─────────────────────────────────────────────────────────────────
+
+class DashboardViewModel(
+    application: Application,
+    private val sessionManager: SessionManager
+) : AndroidViewModel(application) {
+
+    private val db = AppDatabase.getInstance(application)
+
+    // ✅ El repositorio ya tiene todo: Room, ubicación, notificación a familiares
+    private val repository = AlertaPhoneRepository(
+        alertaDao = db.alertaDao(),
+        ubicacionDao = db.ubicacionDao(),
+        audioDao = db.audioDao(),
+        notificacionDao = db.notificacionDao(),
+        familiaUsuarioDao = db.familiaUsuarioDao(),
+        sessionManager = sessionManager,
+        dispositivoDao = db.dispositivoDao(),
+        context = application
+    )
+
+    private val _relojConectado  = MutableStateFlow(false)
+    val relojConectado: StateFlow<Boolean> = _relojConectado.asStateFlow()
+
+    private val _alertaEnviadaId = MutableStateFlow<String?>(null)
+    val alertaEnviadaId: StateFlow<String?> = _alertaEnviadaId.asStateFlow()
+
+    init { verificarReloj() }
+
+    private fun verificarReloj() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val userId  = sessionManager.obtenerUsuarioId() ?: return@launch
+            val alertas = db.alertaDao().obtenerPorUsuario(userId)
+            _relojConectado.value =
+                alertas.any { it.dispositivoId?.startsWith("wear_") == true }
+        }
     }
 
+    fun dispararSOS() {
+        viewModelScope.launch {
+            // Crea la alerta en Room, obtiene ubicación del teléfono
+            // y notifica a los familiares — todo sin pasar por el broker
+            val alerta = repository.crearSOSDesdeMovil() ?: return@launch
+            // Inicia rastreo continuo de ubicación
+            repository.iniciarRastreoEnVivo(alerta.id, viewModelScope)
+            _alertaEnviadaId.value = alerta.id
+        }
+    }
+
+    fun consumirAlertaEnviada() { _alertaEnviadaId.value = null }
+
+    class Factory(
+        private val app:            Application,
+        private val sessionManager: SessionManager
+    ) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            DashboardViewModel(app, sessionManager) as T
+    }
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardScreen(
+    navController:  NavController,
+    usuario:        MenuUsuario,
+    latitud:        Double = 21.1619,
+    longitud:       Double = -101.1925,
+    sessionManager: SessionManager,
+    onCerrarSesion: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val vm: DashboardViewModel = viewModel(
+        factory = DashboardViewModel.Factory(
+            app            = context.applicationContext as Application,
+            sessionManager = sessionManager
+        )
+    )
+
+    val relojConectado  by vm.relojConectado.collectAsState()
+    val alertaEnviadaId by vm.alertaEnviadaId.collectAsState()
+
+    val drawerState       = rememberDrawerState(DrawerValue.Closed)
+    val scope             = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var opcionActual      by remember { mutableStateOf<String?>(null) }
+    var anchoMenu         by remember { mutableStateOf(0.dp) }
+    val density           = LocalDensity.current
+
+    var mostrarConfirmacion by remember { mutableStateOf(false) }
+    var tiempoRestante      by remember { mutableIntStateOf(5) }
+
+    LaunchedEffect(mostrarConfirmacion) {
+        if (mostrarConfirmacion) {
+            tiempoRestante = 5
+            repeat(5) {
+                delay(1_000L)
+                tiempoRestante--
+            }
+            if (mostrarConfirmacion) {
+                mostrarConfirmacion = false
+                vm.dispararSOS()
+            }
+        }
+    }
+
+    LaunchedEffect(alertaEnviadaId) {
+        if (alertaEnviadaId != null) {
+            snackbarHostState.showSnackbar("✓ Alerta enviada a tus familiares")
+            vm.consumirAlertaEnviada()
+        }
+    }
+
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
+    fun navegarDesdeMenu(opcion: String) {
+        scope.launch { drawerState.close() }
+        opcionActual = opcion
+        when (opcion) {
+            "Contactos de emergencia"  -> navController.navigate(Screen.ContactosEmergencia.route)
+            "Familia"                  -> navController.navigate(Screen.Familia.route)
+            "Dispositivos"             -> navController.navigate(Screen.Dispositivos.route)
+            "Historial de ubicaciones" -> navController.navigate(Screen.HistorialUbicaciones.route)
+            "Notificaciones"           -> navController.navigate(Screen.Notificaciones.route)
+            "Configuración"            -> navController.navigate(Screen.Configuracion.route)
+            "Alertas de familiares"    -> navController.navigate(Screen.AlertasRecibidas.route)
+        }
+    }
+
+    if (mostrarConfirmacion) {
+        SOSConfirmacionDialog(
+            tiempoRestante = tiempoRestante,
+            onEnviarAhora  = {
+                mostrarConfirmacion = false
+                vm.dispararSOS()
+            },
+            onCancelar = { mostrarConfirmacion = false }
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        ModalNavigationDrawer(
+            drawerState     = drawerState,
+            gesturesEnabled = false,
+            drawerContent   = {
+                ModalDrawerSheet(
+                    drawerContainerColor = CompaSOSColors.Background,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        anchoMenu = with(density) { coords.size.width.toDp() }
+                    }
+                ) {
+                    MenuLateralContent(
+                        usuario              = usuario,
+                        opcionSeleccionada   = opcionActual,
+                        onOpcionSeleccionada = ::navegarDesdeMenu,
+                        onCerrarSesion = {
+                            scope.launch { drawerState.close() }
+                            onCerrarSesion()
+                        },
+                        onEditarPerfil = {
+                            scope.launch { drawerState.close() }
+                            navController.navigate(Screen.Perfil.route)
+                        }
+                    )
+                }
+            }
+        ) {
+            Scaffold(
+                containerColor = CompaSOSColors.Background,
+                snackbarHost   = { SnackbarHost(snackbarHostState) },
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                "CompaSOS",
+                                color      = CompaSOSColors.TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    if (drawerState.isOpen) drawerState.close()
+                                    else drawerState.open()
+                                }
+                            }) {
+                                Icon(
+                                    if (drawerState.isOpen) Icons.Filled.Close else Icons.Filled.Menu,
+                                    contentDescription = null,
+                                    tint = CompaSOSColors.IconTint
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = CompaSOSColors.Background
+                        )
+                    )
+                }
+            ) { padding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(CompaSOSColors.Background)
+                        .padding(padding)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text       = "Hola, ${usuario.nombreCompleto.substringBefore(" ")}",
+                        color      = CompaSOSColors.TextPrimary,
+                        fontSize   = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text     = "Todo está tranquilo por ahora",
+                        color    = CompaSOSColors.TextSecondary,
+                        fontSize = 13.sp
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+                    EstadoDispositivos(relojConectado = relojConectado)
+
+                    Spacer(Modifier.height(16.dp))
+                    MapaUbicacion(
+                        latitud  = latitud,
+                        longitud = longitud,
+                        modifier = Modifier.fillMaxWidth().height(220.dp)
+                    )
+
+                    Box(
+                        modifier         = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        BotonPanico(onActivarPanico = { mostrarConfirmacion = true })
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        }
+
+        if (drawerState.isOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = anchoMenu)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication        = null
+                    ) { scope.launch { drawerState.close() } }
+            )
+        }
+    }
+}
+
+// ── SOSConfirmacionDialog ─────────────────────────────────────────────────────
+
+@Composable
+private fun SOSConfirmacionDialog(
+    tiempoRestante: Int,
+    onEnviarAhora:  () -> Unit,
+    onCancelar:     () -> Unit
+) {
+    Dialog(onDismissRequest = onCancelar) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = CompaSOSColors.FieldBackground
+        ) {
+            Column(
+                modifier            = Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(EmergenciaColor.copy(alpha = 0.15f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint     = EmergenciaColor,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Text(
+                    text       = "¿Activar alerta de emergencia?",
+                    color      = CompaSOSColors.TextPrimary,
+                    fontSize   = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign  = TextAlign.Center
+                )
+
+                Text(
+                    text      = "Se notificará a todos tus familiares con tu ubicación en tiempo real.",
+                    color     = CompaSOSColors.TextSecondary,
+                    fontSize  = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Box(
+                    modifier         = Modifier.size(80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        progress    = { tiempoRestante / 5f },
+                        modifier    = Modifier.fillMaxSize(),
+                        color       = EmergenciaColor,
+                        trackColor  = EmergenciaColor.copy(alpha = 0.15f),
+                        strokeWidth = 6.dp
+                    )
+                    Text(
+                        text       = "$tiempoRestante",
+                        color      = EmergenciaColor,
+                        fontSize   = 28.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                Text(
+                    text     = "Enviando automáticamente en $tiempoRestante s",
+                    color    = CompaSOSColors.TextSecondary,
+                    fontSize = 11.sp
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                OutlinedButton(
+                    onClick  = onCancelar,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape    = RoundedCornerShape(10.dp),
+                    colors   = ButtonDefaults.outlinedButtonColors(
+                        contentColor = CompaSOSColors.TextPrimary
+                    )
+                ) {
+                    Text("Cancelar — no es emergencia", fontWeight = FontWeight.SemiBold)
+                }
+
+                Button(
+                    onClick  = onEnviarAhora,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape    = RoundedCornerShape(10.dp),
+                    colors   = ButtonDefaults.buttonColors(containerColor = EmergenciaColor)
+                ) {
+                    Text("Enviar ahora", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+// ── EstadoDispositivos ────────────────────────────────────────────────────────
+
+@Composable
+private fun EstadoDispositivos(relojConectado: Boolean) {
+    EstadoPill(
+        icono = Icons.Filled.Watch,
+        texto = if (relojConectado) "Reloj vinculado" else "Sin reloj vinculado",
+        color = if (relojConectado) ExitoColor else CompaSOSColors.TextSecondary
+    )
+}
+
+@Composable
+private fun EstadoPill(icono: ImageVector, texto: String, color: Color) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .background(color.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Icon(icono, contentDescription = null, tint = color, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(texto, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+// ── MapaUbicacion ─────────────────────────────────────────────────────────────
+
+@SuppressLint("RememberReturnType")
+@OptIn(MapboxExperimental::class)
+@Composable
+private fun MapaUbicacion(
+    latitud:  Double,
+    longitud: Double,
+    modifier: Modifier = Modifier,
+    zoom:     Double   = 15.0
+) {
+    remember {
+        MapboxOptions.accessToken =
+            "pk.eyJ1IjoiYW5keXNzMTIiLCJhIjoiY21zbHVtYmJkMTh6YTJ4b29zb25pcjMzOSJ9.388hSDi65h3MrNr5v-rSgQ"
+    }
+
+    val mapViewportState = rememberMapViewportState {
+        setCameraOptions {
+            center(Point.fromLngLat(longitud, latitud))
+            zoom(zoom)
+        }
+    }
+
+    LaunchedEffect(latitud, longitud, zoom) {
+        mapViewportState.setCameraOptions {
+            center(Point.fromLngLat(longitud, latitud))
+            zoom(zoom)
+        }
+    }
+
+    Column(modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier          = Modifier.align(Alignment.End).padding(bottom = 8.dp)
+        ) {
+            Box(modifier = Modifier.size(6.dp).background(ExitoColor, CircleShape))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "En vivo",
+                color      = CompaSOSColors.TextSecondary,
+                fontSize   = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        Box(
+            modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(20.dp))
+        ) {
+            MapboxMap(
+                modifier         = Modifier.fillMaxSize(),
+                mapViewportState = mapViewportState,
+                scaleBar         = {},
+                style            = { MapStyle(style = Style.DARK) }
+            )
+            PuntoUbicacionActual(
+                color    = CompaSOSColors.AccentBlue,
+                modifier = Modifier.align(Alignment.Center)
+            )
+            Text(
+                text       = "%.4f, %.4f".format(latitud, longitud),
+                color      = Color.White,
+                fontSize   = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier   = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PuntoUbicacionActual(color: Color, modifier: Modifier = Modifier) {
+    val transition  = rememberInfiniteTransition(label = "pulso_gps")
+    val escalaPulso by transition.animateFloat(
+        initialValue  = 0.4f,
+        targetValue   = 1f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
+        label         = "escala_pulso_gps"
+    )
+    val alfaPulso by transition.animateFloat(
+        initialValue  = 0.45f,
+        targetValue   = 0f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
+        label         = "alfa_pulso_gps"
+    )
+
+    Box(modifier = modifier.size(54.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(scaleX = escalaPulso, scaleY = escalaPulso, alpha = alfaPulso)
+                .background(color, CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .shadow(4.dp, CircleShape)
+                .background(Color.White, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(modifier = Modifier.size(11.dp).background(color, CircleShape))
+        }
+    }
+}
+
+// ── BotonPanico ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun BotonPanico(onActivarPanico: () -> Unit) {
+    var presionando by remember { mutableStateOf(false) }
+    var progreso    by remember { mutableStateOf(0f) }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "pulso_panico")
+    val escala by infiniteTransition.animateFloat(
+        initialValue  = 1f,
+        targetValue   = 1.06f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label         = "escala"
+    )
+
+    LaunchedEffect(presionando) {
+        if (presionando) {
+            val pasoMs = (DURACION_HOLD_MS / PASOS_HOLD).toLong()
+            for (paso in 1..PASOS_HOLD) {
+                delay(pasoMs)
+                if (!presionando) { progreso = 0f; return@LaunchedEffect }
+                progreso = paso / PASOS_HOLD.toFloat()
+            }
+            onActivarPanico()
+            presionando = false
+            progreso    = 0f
+        } else {
+            progreso = 0f
+        }
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val diametroAnillo  = min(min(maxWidth, maxHeight) * 0.62f, 190.dp)
+        val diametroCirculo = diametroAnillo * 0.84f
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress    = { progreso },
+                    modifier    = Modifier.size(diametroAnillo),
+                    color       = EmergenciaColor,
+                    trackColor  = EmergenciaColor.copy(alpha = 0.15f),
+                    strokeWidth = 5.dp
+                )
+                Box(
+                    modifier = Modifier
+                        .size(diametroCirculo)
+                        .graphicsLayer(scaleX = escala, scaleY = escala)
+                        .shadow(
+                            24.dp, CircleShape,
+                            ambientColor = EmergenciaColor,
+                            spotColor    = EmergenciaColor
+                        )
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(EmergenciaColorClaro, EmergenciaColor),
+                                radius = 170f
+                            ),
+                            CircleShape
+                        )
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    presionando = true
+                                    tryAwaitRelease()
+                                    presionando = false
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "SOS",
+                        color      = Color.White,
+                        fontSize   = 36.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text      = "Mantén presionado 2 segundos para activar",
+                color     = CompaSOSColors.TextSecondary,
+                fontSize  = 12.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
 }
 </file>
 
@@ -10835,6 +11037,34 @@ private fun CompaSOSTextField(
 }
 </file>
 
+<file path="app/src/main/java/com/utng/compasos_movil/navigation/Screen.kt">
+package com.utng.compasos_movil.navigation
+
+sealed class Screen(val route: String) {
+    object Login                : Screen("login")
+    object Registro             : Screen("registro")
+    object PerfilMedico         : Screen("perfil_medico")
+    object Dashboard            : Screen("dashboard")
+    object ContactosEmergencia  : Screen("contactos_emergencia")
+    object Familia              : Screen("familia")
+    object Dispositivos         : Screen("dispositivos")
+    object HistorialUbicaciones : Screen("historial_ubicaciones")
+    object Notificaciones       : Screen("notificaciones")
+    object Configuracion        : Screen("configuracion")
+    object Perfil               : Screen("perfil")
+    object EditarPerfil         : Screen("editar_perfil")
+
+    object AlertasRecibidas : Screen("alertas_recibidas")
+    object VincularTv : Screen("vincular_tv")
+
+    // ← nuevo: pantalla detalle de alerta (desde notificación o lista)
+    object AlertaDetalle : Screen("alertaDetalle/{alertaId}") {
+        fun crearRuta(alertaId: String) = "alertaDetalle/$alertaId"
+    }
+
+}
+</file>
+
 <file path="app/src/main/java/com/utng/compasos_movil/navigation/AppNavigation.kt">
 package com.utng.compasos_movil.navigation
 
@@ -10899,6 +11129,7 @@ fun AppNavigation(
     historialUbicacionDao: HistorialUbicacionDao,
     ubicacionDao:          UbicacionDao,
     context:               Context,
+
     initialRoute:          String? = null
 ) {
     val navController = rememberNavController()
@@ -10990,6 +11221,7 @@ fun AppNavigation(
                 navController = navController,
                 usuarioDao    = usuarioDao,
                 dispositivoDao = dispositivoDao,
+                familiaUsuarioDao = familiaUsuarioDao
             )
         }
 
@@ -11090,6 +11322,110 @@ private fun PantallaPlaceholder(titulo: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text("$titulo — pantalla en construcción")
     }
+}
+</file>
+
+<file path="app/build.gradle.kts">
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    id("com.google.devtools.ksp")
+
+
+}
+
+android {
+    namespace = "com.utng.compasos_movil"
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
+
+    defaultConfig {
+        applicationId = "com.utng.compasos_movil"
+        minSdk = 24
+        targetSdk = 37
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            optimization {
+                enable = false
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    buildFeatures {
+        compose = true
+    }
+}
+
+dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.text)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.junit)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // Dependencias para la Navegacion
+    implementation("androidx.navigation:navigation-compose:2.9.0")
+
+    // Dependencias ROOM
+    val room_version = "3.0.0"
+    implementation("androidx.room3:room3-runtime:$room_version")
+    ksp("androidx.room3:room3-compiler:$room_version")
+
+    // material 3 iconos
+    implementation("androidx.compose.material:material-icons-extended:1.7.6")
+
+// OSMDroid - OpenStreetMap
+    implementation("org.osmdroid:osmdroid-android:6.1.17")
+// Retrofit para llamadas a API
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+// Gson
+    implementation("com.google.code.gson:gson:2.10.1")
+// Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+// Permisos (Opcional - Simplifica la gestión de permisos)
+    implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+// Hilt (Inyección de dependencias - Opcional)
+    implementation("com.google.dagger:hilt-android:2.48")
+
+    implementation("com.mapbox.extension:maps-compose:11.28.0")
+    implementation("com.mapbox.maps:android:11.28.0")
+
+
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // En el bloque dependencies:
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+
+
+
+
 }
 </file>
 
@@ -11225,110 +11561,6 @@ class MainActivity : ComponentActivity() {
 
         permissionLauncher.launch(permissions.toTypedArray())
     }
-}
-</file>
-
-<file path="app/build.gradle.kts">
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
-    id("com.google.devtools.ksp")
-
-
-}
-
-android {
-    namespace = "com.utng.compasos_movil"
-    compileSdk {
-        version = release(37) {
-            minorApiLevel = 1
-        }
-    }
-
-    defaultConfig {
-        applicationId = "com.utng.compasos_movil"
-        minSdk = 24
-        targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildTypes {
-        release {
-            optimization {
-                enable = false
-            }
-        }
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    buildFeatures {
-        compose = true
-    }
-}
-
-dependencies {
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.text)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
-    debugImplementation(libs.androidx.compose.ui.tooling)
-
-    // Dependencias para la Navegacion
-    implementation("androidx.navigation:navigation-compose:2.9.0")
-
-    // Dependencias ROOM
-    val room_version = "3.0.0"
-    implementation("androidx.room3:room3-runtime:$room_version")
-    ksp("androidx.room3:room3-compiler:$room_version")
-
-    // material 3 iconos
-    implementation("androidx.compose.material:material-icons-extended:1.7.6")
-
-// OSMDroid - OpenStreetMap
-    implementation("org.osmdroid:osmdroid-android:6.1.17")
-// Retrofit para llamadas a API
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-// Gson
-    implementation("com.google.code.gson:gson:2.10.1")
-// Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-// Permisos (Opcional - Simplifica la gestión de permisos)
-    implementation("com.google.accompanist:accompanist-permissions:0.32.0")
-// Hilt (Inyección de dependencias - Opcional)
-    implementation("com.google.dagger:hilt-android:2.48")
-
-    implementation("com.mapbox.extension:maps-compose:11.28.0")
-    implementation("com.mapbox.maps:android:11.28.0")
-
-
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
-    // En el bloque dependencies:
-    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
-
-    implementation("com.google.android.gms:play-services-location:21.3.0")
-
-
-
-
 }
 </file>
 

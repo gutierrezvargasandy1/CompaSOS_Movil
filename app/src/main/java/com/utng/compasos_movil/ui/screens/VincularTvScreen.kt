@@ -28,6 +28,7 @@ import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModel
 import com.utng.compasos_movil.TvVinculacionModule.TvVinculacionViewModelFactory
 import com.utng.compasos_movil.data.dao.DispositivoDao
 import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.HistorialUbicacionDao
 import com.utng.compasos_movil.data.dao.UsuarioDao
 import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
@@ -40,6 +41,8 @@ fun VincularTvScreen(
     usuarioDao: UsuarioDao,
     dispositivoDao: DispositivoDao,
     familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+    historialUbicacionDao: HistorialUbicacionDao        // ← agregar
+
 
 ) {
     val context = LocalContext.current
@@ -49,6 +52,9 @@ fun VincularTvScreen(
             dispositivoDao = dispositivoDao,
             sessionManager = SessionManager(context),
             familiaUsuarioDao = familiaUsuarioDao,
+            historialDao      = historialUbicacionDao,   // ← agregar
+
+
         )
     )
     val estado by viewModel.estado.collectAsState()

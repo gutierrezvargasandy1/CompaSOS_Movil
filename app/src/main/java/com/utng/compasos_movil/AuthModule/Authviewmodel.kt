@@ -4,8 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.utng.compasos_movil.config.AlertaMqttService
+import com.utng.compasos_movil.config.TvSyncService
 import com.utng.compasos_movil.data.entity.UsuarioEntity
 import com.utng.compasos_movil.utils.SessionManager
+import dagger.hilt.android.internal.Contexts.getApplication
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -78,7 +80,7 @@ class AuthViewModel(
 
                     // ✅ context disponible via getApplication()
                     AlertaMqttService.iniciar(getApplication(), usuario.id)
-
+                    TvSyncService.iniciar(getApplication(), usuario.id)   // ← agregar (+ el import)
                     _authState.value  = AuthState.Success(usuario)
                     _errorMessage.value = null
                 } else {

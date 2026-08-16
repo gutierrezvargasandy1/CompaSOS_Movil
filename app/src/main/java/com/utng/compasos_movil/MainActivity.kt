@@ -5,21 +5,21 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.utng.compasos_movil.config.AlertaMqttService
+import com.utng.compasos_movil.config.TvSyncService
 import com.utng.compasos_movil.data.AppDatabase
 import com.utng.compasos_movil.navigation.AppNavigation
 import com.utng.compasos_movil.ui.theme.CompaSOS_MovilTheme
 import com.utng.compasos_movil.utils.SessionManager
-import android.util.Log
 
 class MainActivity : ComponentActivity() {
 
-    // ── Launcher para solicitar permisos ─────────────────────────────────────
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -28,17 +28,12 @@ class MainActivity : ComponentActivity() {
 
         val fgsLocationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             permissions[Manifest.permission.FOREGROUND_SERVICE_LOCATION] == true
-        } else {
-            true // En versiones anteriores, no se necesita este permiso
-        }
+        } else true
 
         if (locationGranted && fgsLocationGranted) {
-            // Iniciar el servicio MQTT después de otorgar permisos
-            val userId = SessionManager(applicationContext).obtenerUsuarioId()
-            AlertaMqttService.iniciar(applicationContext, userId)
+            iniciarServicios()
         } else {
             Log.e("MainActivity", "Permisos necesarios no otorgados")
-            // Podrías mostrar un mensaje al usuario aquí
         }
     }
 
@@ -46,10 +41,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // ── Base de datos singleton ───────────────────────────────────────────
         val db = AppDatabase.getInstance(applicationContext)
 
-        // ── DAOs ──────────────────────────────────────────────────────────────
         val usuarioDao            = db.usuarioDao()
         val perfilMedicoDao       = db.perfilMedicoDao()
         val familiaDao            = db.familiaDao()
@@ -61,17 +54,8 @@ class MainActivity : ComponentActivity() {
         val historialUbicacionDao = db.historialUbicacionDao()
         val ubicacionDao          = db.ubicacionDao()
 
-        // ── Servicio MQTT ─────────────────────────────────────────────────────
-        // Verificar permisos antes de iniciar el servicio
-        if (hasRequiredPermissions()) {
-            val userId = SessionManager(applicationContext).obtenerUsuarioId()
-            AlertaMqttService.iniciar(applicationContext, userId)
-        } else {
-            // Solicitar permisos
-            requestPermissions()
-        }
+        if (hasRequiredPermissions()) iniciarServicios() else requestPermissions()
 
-        // ── Navegación ────────────────────────────────────────────────────────
         setContent {
             CompaSOS_MovilTheme {
                 AppNavigation(
@@ -97,22 +81,27 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
     }
 
-    // ── Métodos auxiliares ──────────────────────────────────────────────────
+    /**
+     * AlertaMqttService = reloj + familiares (NO se toca).
+     * TvSyncService     = pantalla TV (nuevo, corre en paralelo con su propio
+     *                     clientId, no interfiere con el otro).
+     */
+    private fun iniciarServicios() {
+        val userId = SessionManager(applicationContext).obtenerUsuarioId()
+        AlertaMqttService.iniciar(applicationContext, userId)
+        TvSyncService.iniciar(applicationContext, userId)
+    }
 
     private fun hasRequiredPermissions(): Boolean {
         val locationGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION
+            this, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
         val fgsLocationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.FOREGROUND_SERVICE_LOCATION
+                this, Manifest.permission.FOREGROUND_SERVICE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
+        } else true
 
         return locationGranted && fgsLocationGranted
     }
@@ -122,11 +111,12 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             permissions.add(Manifest.permission.FOREGROUND_SERVICE_LOCATION)
         }
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         permissionLauncher.launch(permissions.toTypedArray())
     }
 }

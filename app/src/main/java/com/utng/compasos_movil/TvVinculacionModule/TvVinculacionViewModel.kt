@@ -6,8 +6,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.utng.compasos_movil.config.MqttConfig
 import com.utng.compasos_movil.config.MqttManager
+import com.utng.compasos_movil.config.TvSyncService
 import com.utng.compasos_movil.data.dao.DispositivoDao
-import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao   // ← NUEVO
+import com.utng.compasos_movil.data.dao.FamiliaUsuarioDao
+import com.utng.compasos_movil.data.dao.HistorialUbicacionDao
 import com.utng.compasos_movil.data.dao.UsuarioDao
 import com.utng.compasos_movil.data.entity.DispositivoEntity
 import com.utng.compasos_movil.utils.SessionManager
@@ -29,10 +31,26 @@ sealed class EstadoVinculacionTv {
     data class Error(val mensaje: String) : EstadoVinculacionTv()
 }
 
+/**
+ * Cambios respecto a tu versión:
+ *
+ * 1. La sesión inicial ahora incluye la ÚLTIMA UBICACIÓN de cada familiar
+ *    (sacada de historial_ubicacion). Antes mandabas nombre + enLinea=false y
+ *    nada más, por eso la TV pintaba a todos "sin ubicación" para siempre.
+ *
+ * 2. Al terminar de vincular llama a TvSyncService.sincronizarAhora(), para que
+ *    la pantalla reciba el snapshot completo de inmediato en vez de esperar
+ *    al siguiente latido.
+ *
+ * 3. onCleared() ya NO desconecta ciegamente: se desuscribe del topic de
+ *    solicitud primero. Antes, al salir de la pantalla, matabas la conexión
+ *    y con ella cualquier suscripción viva.
+ */
 class TvVinculacionViewModel(
     private val usuarioDao:        UsuarioDao,
     private val dispositivoDao:    DispositivoDao,
-    private val familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+    private val familiaUsuarioDao: FamiliaUsuarioDao,
+    private val historialDao:      HistorialUbicacionDao,   // ← NUEVO
     private val sessionManager:    SessionManager
 ) : ViewModel() {
 
@@ -53,7 +71,9 @@ class TvVinculacionViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (!mqtt.estaConectado) mqtt.conectar()
+                if (!mqtt.estaConectado) {
+                    mqtt.conectar(clientId = "compasos_vinc_${System.currentTimeMillis()}")
+                }
                 val topicSolicitud = "${MqttConfig.TOPIC_VINCULACION}/tv/$codigo/solicitud"
                 mqtt.suscribir(topicSolicitud) { _, payload ->
                     viewModelScope.launch(Dispatchers.IO) {
@@ -81,20 +101,22 @@ class TvVinculacionViewModel(
                 return
             }
             val usuario = usuarioDao.obtenerPorId(userId)
-            val nombre  = usuario?.nombre  ?: sessionManager.obtenerUsuarioNombre() ?: ""
-            val email   = usuario?.correo  ?: sessionManager.obtenerUsuarioEmail()  ?: ""
+            val nombre  = usuario?.nombre ?: sessionManager.obtenerUsuarioNombre() ?: ""
+            val email   = usuario?.correo ?: sessionManager.obtenerUsuarioEmail()  ?: ""
 
-            // 1. Responder a la TV con datos de sesión
+            // 1. Responder a la TV con los datos de sesión
             mqtt.publicar(
                 "${MqttConfig.TOPIC_VINCULACION}/tv/$codigoEsperado/respuesta",
                 JSONObject().apply {
                     put("usuarioId", userId)
                     put("nombre",    nombre)
                     put("email",     email)
+                    put("tvId",      idTv)
+                    put("aceptada",  true)
                 }.toString()
             )
 
-            // 2. Guardar la TV en Room (teléfono)
+            // 2. Guardar la TV en Room — TvSyncService la lee de aquí
             dispositivoDao.insertar(
                 DispositivoEntity(
                     id               = idTv,
@@ -111,50 +133,65 @@ class TvVinculacionViewModel(
             )
             Log.d(TAG, "TV guardada en Room: $idTv")
 
-            // 3. ── NUEVO: construir familiares reales ─────────────────────────
+            // 3. Sesión inicial CON ubicaciones reales
             val familiaresArray = JSONArray()
+            familiaresArray.put(jsonFamiliar(userId, nombre, usuario?.apellidoPaterno, "Yo"))
 
-            // El propietario aparece primero — así el TV rastrea su posición en el mapa
-            familiaresArray.put(JSONObject().apply {
-                put("usuarioId", userId)
-                put("nombre",    nombre)
-                put("apellido",  "")
-                put("enLinea",   true)
-            })
-
-            // Familiares registrados en la app
-            val familiares = familiaUsuarioDao.obtenerTodosFamiliares(userId)
-            for (f in familiares) {
-                val datosFamiliar = usuarioDao.obtenerPorId(f.usuarioId) ?: continue
-                familiaresArray.put(JSONObject().apply {
-                    put("usuarioId", f.usuarioId)
-                    put("nombre",    datosFamiliar.nombre ?: "")
-                    put("apellido",  "")
-                    put("enLinea",   false)
-                })
+            for (rel in familiaUsuarioDao.obtenerTodosFamiliares(userId)) {
+                val u = usuarioDao.obtenerPorId(rel.usuarioId) ?: continue
+                familiaresArray.put(
+                    jsonFamiliar(u.id, u.nombre, u.apellidoPaterno, rel.rol ?: "Miembro")
+                )
             }
             Log.d(TAG, "Sesión con ${familiaresArray.length()} familiar(es)")
 
-            // 4. Enviar sesión inicial a la TV
             mqtt.publicar(
-                "${MqttConfig.TOPIC_TV}/$idTv/sesion",
+                MqttConfig.topicTvSesion(idTv),
                 JSONObject().apply {
                     put("usuarioId",  userId)
                     put("nombre",     nombre)
                     put("email",      email)
-                    put("familiares", familiaresArray)   // ← ahora con datos reales
-                }.toString()
+                    put("fecha",      fmt.format(Date()))
+                    put("familiares", familiaresArray)
+                }.toString(),
+                retained = true
             )
+
+            // 4. Que el servicio empuje el snapshot completo ya mismo
+            TvSyncService.sincronizarAhora()
 
             _estado.update { EstadoVinculacionTv.Exitosa(modelo) }
             Log.d(TAG, "✅ TV vinculada: $modelo")
         } catch (e: Exception) {
-            Log.e(TAG, "Error procesando solicitud de TV: ${e.message}")
+            Log.e(TAG, "Error procesando solicitud de TV: ${e.message}", e)
             _estado.update { EstadoVinculacionTv.Error("Error al procesar la solicitud de la TV") }
         }
     }
 
+    private suspend fun jsonFamiliar(
+        id: String, nombre: String, apellido: String?, rol: String
+    ): JSONObject {
+        val ubi = historialDao.obtenerUltimaDeUsuario(id)
+        return JSONObject().apply {
+            put("usuarioId", id)
+            put("nombre",    nombre)
+            put("apellido",  apellido ?: "")
+            ubi?.latitud?.let  { put("latitud",  it) }
+            ubi?.longitud?.let { put("longitud", it) }
+            put("fecha",   ubi?.fecha ?: "")
+            put("enLinea", ubi != null)
+            put("rol",     rol)
+        }
+    }
+
     fun reiniciar() {
+        codigoActivo?.let { cod ->
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching {
+                    mqtt.desuscribir("${MqttConfig.TOPIC_VINCULACION}/tv/$cod/solicitud")
+                }
+            }
+        }
         codigoActivo  = null
         _estado.value = EstadoVinculacionTv.Inactivo
     }
@@ -173,10 +210,13 @@ class TvVinculacionViewModel(
 class TvVinculacionViewModelFactory(
     private val usuarioDao:        UsuarioDao,
     private val dispositivoDao:    DispositivoDao,
-    private val familiaUsuarioDao: FamiliaUsuarioDao,   // ← NUEVO
+    private val familiaUsuarioDao: FamiliaUsuarioDao,
+    private val historialDao:      HistorialUbicacionDao,   // ← NUEVO
     private val sessionManager:    SessionManager
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        TvVinculacionViewModel(usuarioDao, dispositivoDao, familiaUsuarioDao, sessionManager) as T
+        TvVinculacionViewModel(
+            usuarioDao, dispositivoDao, familiaUsuarioDao, historialDao, sessionManager
+        ) as T
 }

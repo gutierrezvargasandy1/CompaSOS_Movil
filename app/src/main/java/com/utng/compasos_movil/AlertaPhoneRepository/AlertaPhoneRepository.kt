@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.utng.compasos_movil.config.MqttConfig
 import com.utng.compasos_movil.config.MqttManager
+import com.utng.compasos_movil.config.TvSyncService
+import com.utng.compasos_movil.data.AppDatabase
 import com.utng.compasos_movil.data.LocationRepository
 import com.utng.compasos_movil.data.UbicacionActual
 import com.utng.compasos_movil.data.dao.AlertaDao
@@ -14,10 +16,10 @@ import com.utng.compasos_movil.data.dao.NotificacionDao
 import com.utng.compasos_movil.data.dao.UbicacionDao
 import com.utng.compasos_movil.data.entity.AlertaEntity
 import com.utng.compasos_movil.data.entity.AudioEntity
+import com.utng.compasos_movil.data.entity.HistorialUbicacionEntity
 import com.utng.compasos_movil.data.entity.NotificacionEntity
 import com.utng.compasos_movil.data.entity.UbicacionEntity
 import com.utng.compasos_movil.utils.SessionManager
-import com.utng.compasos_movil.utils.TvMqttPublisher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
@@ -27,13 +29,25 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * ⚠️ EL CONSTRUCTOR NO CAMBIÓ — AlertaMqttService y DashboardViewModel
+ * siguen construyéndolo exactamente igual.
+ *
+ * El historialUbicacionDao lo saco de la instancia singleton de AppDatabase
+ * usando el `context` que ya recibías, para no tocar las firmas.
+ *
+ * ⚠️ EL FLUJO DEL RELOJ NO CAMBIÓ: procesarSOS, procesarAudio,
+ * iniciarRastreoEnVivo y los topics compasos/alerta y compasos/familia
+ * hacen exactamente lo mismo que antes. Solo se AGREGAN llamadas a las TVs
+ * y el guardado de ubicación por usuario.
+ */
 class AlertaPhoneRepository(
     private val alertaDao:         AlertaDao,
     private val ubicacionDao:      UbicacionDao,
     private val audioDao:          AudioDao,
     private val notificacionDao:   NotificacionDao,
     private val familiaUsuarioDao: FamiliaUsuarioDao,
-    private val dispositivoDao:    DispositivoDao,   // ← NUEVO
+    private val dispositivoDao:    DispositivoDao,
     private val sessionManager:    SessionManager,
     private val context:           Context
 ) {
@@ -41,7 +55,10 @@ class AlertaPhoneRepository(
     private val locationRepo = LocationRepository(context)
     private val fmt          = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
-    // ── SOS ──────────────────────────────────────────────────────────────────
+    // Sin cambiar el constructor: mismo singleton que ya usa el servicio.
+    private val historialDao = AppDatabase.getInstance(context).historialUbicacionDao()
+
+    // ── SOS (viene del reloj) — SIN CAMBIOS DE LÓGICA ────────────────────────
 
     suspend fun procesarSOS(payloadJson: String): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
@@ -78,10 +95,12 @@ class AlertaPhoneRepository(
                         fecha     = fmt.format(Date())
                     )
                 )
+                // ← NUEVO: también al historial por usuario, que es lo que lee la TV
+                guardarEnHistorial(usuarioId, ubicacion.latitud, ubicacion.longitud)
             }
 
             notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
-            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
             alerta
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error procesando SOS: ${e.message}")
@@ -89,7 +108,7 @@ class AlertaPhoneRepository(
         }
     }
 
-    // ── Notificación a familiares ─────────────────────────────────────────────
+    // ── Notificación a familiares (topic compasos/familia) ───────────────────
 
     private suspend fun notificarFamiliares(
         alerta:    AlertaEntity,
@@ -107,6 +126,8 @@ class AlertaPhoneRepository(
 
             if (!mqtt.estaConectado) mqtt.conectar()
 
+            val nombreEmisor = sessionManager.obtenerUsuarioNombre() ?: ""
+
             val payloadBase = JSONObject().apply {
                 put("alertaId",      alerta.id)
                 put("dispositivoId", alerta.dispositivoId)
@@ -114,6 +135,11 @@ class AlertaPhoneRepository(
                 put("descripcion",   alerta.descripcion)
                 put("estado",        alerta.estado)
                 put("fecha",         alerta.fecha)
+                // ← NUEVO: sin esto, el receptor no puede saber DE QUIÉN es la
+                //   ubicación que le llega después (la alerta se guarda con el
+                //   usuarioId del receptor, no el del emisor).
+                put("emisorId",      usuarioId)
+                put("emisorNombre",  nombreEmisor)
                 latitud?.let  { put("latitud",  it) }
                 longitud?.let { put("longitud", it) }
             }.toString()
@@ -140,7 +166,7 @@ class AlertaPhoneRepository(
         }
     }
 
-    // ── NUEVO: Notificación a TVs vinculadas ──────────────────────────────────
+    // ── Notificación a TVs vinculadas ─────────────────────────────────────────
 
     private suspend fun notificarTvs(
         alerta:    AlertaEntity,
@@ -149,36 +175,37 @@ class AlertaPhoneRepository(
         longitud:  Double?
     ) {
         try {
-            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
-            if (tvs.isEmpty()) return
-
-            if (!mqtt.estaConectado) mqtt.conectar()
-
             val nombre = sessionManager.obtenerUsuarioNombre() ?: ""
 
-            for (tv in tvs) {
-                TvMqttPublisher.enviarAlertaATv(
-                    mqtt         = mqtt,
-                    tvId         = tv.id,
-                    alertaId     = alerta.id,
-                    tipoAlerta   = alerta.tipoAlerta   ?: "SOS",                  // ← fix
-                    descripcion  = alerta.descripcion ?: "Alerta de emergencia",
-                    emisorNombre = nombre,
-                    emisorId     = usuarioId,
-                    latitud      = latitud,
-                    longitud     = longitud
-                )
-                Log.d("AlertaPhoneRepo", "Alerta enviada a TV: ${tv.id} (${tv.modelo})")
-            }
+            // Ahora va por TvSyncService: una sola conexión, con reintento y
+            // sin necesidad de resolver el tvId a mano.
+            TvSyncService.publicarAlerta(
+                alertaId     = alerta.id,
+                tipoAlerta   = alerta.tipoAlerta ?: "SOS",
+                descripcion  = alerta.descripcion ?: "Alerta de emergencia",
+                emisorId     = usuarioId,
+                emisorNombre = nombre,
+                latitud      = latitud,
+                longitud     = longitud
+            )
+
+            TvSyncService.publicarNotificacion(
+                notificacionId = UUID.randomUUID().toString(),
+                alertaId       = alerta.id,
+                titulo         = "⚠️ ${alerta.tipoAlerta ?: "SOS"}",
+                mensaje        = "$nombre activó una alerta de emergencia",
+                tipo           = "sos"
+            )
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error notificando TVs: ${e.message}")
         }
     }
 
-    // ── Rastreo continuo de ubicación ─────────────────────────────────────────
+    // ── Rastreo continuo de ubicación — SIN CAMBIOS DE LÓGICA ────────────────
 
     fun iniciarRastreoEnVivo(alertaId: String, scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
+            val usuarioId = sessionManager.obtenerUsuarioId()
             var contador = 0
             locationRepo.ubicacionEnVivo()
                 .catch { e -> Log.e("AlertaPhoneRepo", "Error en rastreo: ${e.message}") }
@@ -195,8 +222,11 @@ class AlertaPhoneRepository(
                         )
                     )
                     if (++contador % 3 == 0) {
+                        usuarioId?.let {
+                            guardarEnHistorial(it, ubicacion.latitud, ubicacion.longitud)
+                        }
                         publicarUbicacionAFamiliares(alertaId, ubicacion)
-                        publicarUbicacionATvs(ubicacion) // ← NUEVO
+                        publicarUbicacionATvs(ubicacion)
                     }
                 }
         }
@@ -214,11 +244,13 @@ class AlertaPhoneRepository(
             if (!mqtt.estaConectado) mqtt.conectar()
 
             val payload = JSONObject().apply {
-                put("alertaId", alertaId)
-                put("tipo",     "ubicacion_viva")
-                put("latitud",  ubicacion.latitud)
-                put("longitud", ubicacion.longitud)
-                put("fecha",    fmt.format(Date()))
+                put("alertaId",  alertaId)
+                put("tipo",      "ubicacion_viva")
+                put("usuarioId", usuarioId)   // ← NUEVO: identifica al emisor
+                put("emisorId",  usuarioId)   // ← alias, por compatibilidad
+                put("latitud",   ubicacion.latitud)
+                put("longitud",  ubicacion.longitud)
+                put("fecha",     fmt.format(Date()))
             }.toString()
 
             for (familiar in familiares) {
@@ -233,31 +265,16 @@ class AlertaPhoneRepository(
         }
     }
 
-    // ← NUEVO: publica ubicación del dueño del SOS a cada TV vinculada
     private suspend fun publicarUbicacionATvs(ubicacion: UbicacionActual) {
         try {
             val usuarioId = sessionManager.obtenerUsuarioId() ?: return
-            val tvs = dispositivoDao.obtenerTvsVinculados(usuarioId)
-            if (tvs.isEmpty()) return
-
-            if (!mqtt.estaConectado) mqtt.conectar()
-
-            for (tv in tvs) {
-                TvMqttPublisher.enviarUbicacionATv(
-                    mqtt      = mqtt,
-                    tvId      = tv.id,
-                    usuarioId = usuarioId,
-                    latitud   = ubicacion.latitud,
-                    longitud  = ubicacion.longitud
-                )
-            }
-            Log.d("AlertaPhoneRepo", "Ubicación en vivo enviada a ${tvs.size} TV(s)")
+            TvSyncService.publicarUbicacion(usuarioId, ubicacion.latitud, ubicacion.longitud)
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error publicando ubicación a TVs: ${e.message}")
         }
     }
 
-    // ── Audio del reloj ───────────────────────────────────────────────────────
+    // ── Audio del reloj — SIN CAMBIOS ────────────────────────────────────────
 
     suspend fun procesarAudio(payloadJson: String) = withContext(Dispatchers.IO) {
         try {
@@ -276,7 +293,7 @@ class AlertaPhoneRepository(
         }
     }
 
-    // ── Alerta recibida como familiar ─────────────────────────────────────────
+    // ── Alerta recibida como familiar ────────────────────────────────────────
 
     suspend fun procesarAlertaFamiliar(payloadJson: String): AlertaEntity? =
         withContext(Dispatchers.IO) {
@@ -288,6 +305,9 @@ class AlertaPhoneRepository(
                 }
 
                 alertaDao.obtenerPorId(alertaId)?.let { return@withContext it }
+
+                val emisorId     = json.optString("emisorId")
+                val emisorNombre = json.optString("emisorNombre")
 
                 val alerta = AlertaEntity(
                     id            = alertaId,
@@ -325,7 +345,30 @@ class AlertaPhoneRepository(
                             fecha     = fmt.format(Date())
                         )
                     )
+                    // ← NUEVO: la ubicación del EMISOR, indexada por su usuarioId,
+                    //   para que la TV pueda pintarlo en el mapa
+                    if (emisorId.isNotBlank()) guardarEnHistorial(emisorId, lat, lng)
                 }
+
+                // ← NUEVO: reenviar a las TVs
+                TvSyncService.publicarAlerta(
+                    alertaId     = alertaId,
+                    tipoAlerta   = alerta.tipoAlerta ?: "SOS",
+                    descripcion  = alerta.descripcion,
+                    emisorId     = emisorId.ifBlank { usuarioId },
+                    emisorNombre = emisorNombre.ifBlank { null },
+                    latitud      = lat.takeIf { !it.isNaN() },
+                    longitud     = lng.takeIf { !it.isNaN() }
+                )
+                TvSyncService.publicarNotificacion(
+                    notificacionId = UUID.randomUUID().toString(),
+                    alertaId       = alertaId,
+                    titulo         = "⚠️ Un familiar necesita ayuda",
+                    mensaje        = emisorNombre.ifBlank { "Un familiar" } +
+                            " activó su alerta de emergencia",
+                    tipo           = "sos"
+                )
+
                 alerta
             } catch (e: Exception) {
                 Log.e("AlertaPhoneRepo", "Error procesando alerta de familiar: ${e.message}")
@@ -343,6 +386,8 @@ class AlertaPhoneRepository(
             val lng = json.optDouble("longitud")
             if (lat.isNaN() || lng.isNaN()) return@withContext
 
+            val fecha = json.optString("fecha", fmt.format(Date()))
+
             ubicacionDao.insertar(
                 UbicacionEntity(
                     id        = UUID.randomUUID().toString(),
@@ -351,14 +396,31 @@ class AlertaPhoneRepository(
                     longitud  = lng,
                     precision = null,
                     velocidad = null,
-                    fecha     = json.optString("fecha", fmt.format(Date()))
+                    fecha     = fecha
                 )
             )
+
+            // ← NUEVO: guardar por usuarioId y empujar a la TV.
+            //   Este es el camino que hace que la ubicación EN VIVO de un
+            //   familiar llegue a la pantalla, no solo la del dueño.
+            val emisorId = json.optString("usuarioId")
+                .ifBlank { json.optString("emisorId") }
+
+            if (emisorId.isNotBlank()) {
+                guardarEnHistorial(emisorId, lat, lng, fecha)
+                TvSyncService.publicarUbicacion(emisorId, lat, lng, fecha)
+            } else {
+                Log.w("AlertaPhoneRepo",
+                    "Ubicación de familiar sin usuarioId — no se puede mandar a la TV")
+            }
+
             Log.d("AlertaPhoneRepo", "Ubicación de familiar guardada para alerta: $alertaId")
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error procesando ubicación de familiar: ${e.message}")
         }
     }
+
+    // ── SOS desde el propio móvil — SIN CAMBIOS DE LÓGICA ────────────────────
 
     suspend fun crearSOSDesdeMovil(): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
@@ -393,13 +455,39 @@ class AlertaPhoneRepository(
                         fecha     = fmt.format(Date())
                     )
                 )
+                guardarEnHistorial(usuarioId, ubicacion.latitud, ubicacion.longitud)
             }
             notificarFamiliares(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
-            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud) // ← NUEVO
+            notificarTvs(alerta, usuarioId, ubicacion?.latitud, ubicacion?.longitud)
             alerta
         } catch (e: Exception) {
             Log.e("AlertaPhoneRepo", "Error en crearSOSDesdeMovil: ${e.message}")
             null
+        }
+    }
+
+    // ── Helper ────────────────────────────────────────────────────────────────
+
+    /**
+     * `historial_ubicacion` es la única tabla indexada por usuarioId, así que
+     * es la fuente de "última ubicación conocida de cada persona" que arma el
+     * snapshot para la TV.
+     */
+    private suspend fun guardarEnHistorial(
+        usuarioId: String, lat: Double, lng: Double, fecha: String = fmt.format(Date())
+    ) {
+        runCatching {
+            historialDao.insertar(
+                HistorialUbicacionEntity(
+                    id        = UUID.randomUUID().toString(),
+                    usuarioId = usuarioId,
+                    latitud   = lat,
+                    longitud  = lng,
+                    fecha     = fecha
+                )
+            )
+        }.onFailure {
+            Log.e("AlertaPhoneRepo", "No se pudo guardar en historial: ${it.message}")
         }
     }
 }

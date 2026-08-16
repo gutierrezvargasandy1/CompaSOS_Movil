@@ -2,20 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Ubicación -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- Otros -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -45,9 +41,15 @@
             </intent-filter>
         </activity>
 
-        <!-- ✅ <service> siempre dentro de <application> -->
+        <!-- Reloj + familiares — sin cambios -->
         <service
             android:name=".config.AlertaMqttService"
+            android:foregroundServiceType="location|dataSync"
+            android:exported="false" />
+
+        <!-- ← NUEVO: sincronización con la pantalla TV -->
+        <service
+            android:name=".config.TvSyncService"
             android:foregroundServiceType="location|dataSync"
             android:exported="false" />
 

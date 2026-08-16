@@ -153,7 +153,9 @@ fun AppNavigation(
                 navController = navController,
                 usuarioDao    = usuarioDao,
                 dispositivoDao = dispositivoDao,
-                familiaUsuarioDao = familiaUsuarioDao
+                familiaUsuarioDao = familiaUsuarioDao,
+                historialUbicacionDao = historialUbicacionDao   // ← agregar
+
             )
         }
 
