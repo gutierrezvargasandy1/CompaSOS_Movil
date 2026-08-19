@@ -1,6 +1,8 @@
 package com.utng.compasos_movil.data
 
+import android.content.Context
 import androidx.room3.Database
+import androidx.room3.Room
 import androidx.room3.RoomDatabase
 import com.utng.compasos_movil.data.dao.AlertaDao
 import com.utng.compasos_movil.data.dao.AlertaOficialDao
@@ -33,6 +35,10 @@ import com.utng.compasos_movil.data.entity.SensorEntity
 import com.utng.compasos_movil.data.entity.UbicacionEntity
 import com.utng.compasos_movil.data.entity.UsuarioEntity
 
+/**
+ * base de datos principal de room para la aplicación compasos.
+ * define el esquema de la base de datos, las entidades registradas y los objetos de acceso a datos (dao).
+ */
 @Database(
     entities = [
         UsuarioEntity::class,
@@ -50,39 +56,140 @@ import com.utng.compasos_movil.data.entity.UsuarioEntity
         FamiliaEntity::class,
         FamiliaUsuarioEntity::class,
         Llamada911Entity::class
-               ],
+    ],
     version = 2
 )
 abstract class AppDatabase : RoomDatabase() {
 
-    abstract fun usuarioDao(): UsuarioDao
+    /**
+     * provee el objeto de acceso a datos para la entidad de usuarios.
+     *
+     * @return instancia de [UsuarioDao].
+     */
+    abstract fun usuarioDao():            UsuarioDao
 
-    abstract fun perfilMedicoDao(): PerfilMedicoDao
+    /**
+     * provee el objeto de acceso a datos para los perfiles médicos.
+     *
+     * @return instancia de [PerfilMedicoDao].
+     */
+    abstract fun perfilMedicoDao():       PerfilMedicoDao
 
+    /**
+     * provee el objeto de acceso a datos para los contactos de emergencia.
+     *
+     * @return instancia de [ContactoEmergenciaDao].
+     */
     abstract fun contactoEmergenciaDao(): ContactoEmergenciaDao
 
-    abstract fun dispositivoDao(): DispositivoDao
+    /**
+     * provee el objeto de acceso a datos para los dispositivos vinculados.
+     *
+     * @return instancia de [DispositivoDao].
+     */
+    abstract fun dispositivoDao():        DispositivoDao
 
-    abstract fun alertaDao(): AlertaDao
+    /**
+     * provee el objeto de acceso a datos para la gestión de alertas.
+     *
+     * @return instancia de [AlertaDao].
+     */
+    abstract fun alertaDao():             AlertaDao
 
-    abstract fun ubicacionDao(): UbicacionDao
+    /**
+     * provee el objeto de acceso a datos para las ubicaciones registradas en alertas.
+     *
+     * @return instancia de [UbicacionDao].
+     */
+    abstract fun ubicacionDao():          UbicacionDao
 
-    abstract fun audioDao(): AudioDao
+    /**
+     * provee el objeto de acceso a datos para los archivos de audio grabados.
+     *
+     * @return instancia de [AudioDao].
+     */
+    abstract fun audioDao():              AudioDao
 
-    abstract fun sensorDao(): SensorDao
+    /**
+     * provee el objeto de acceso a datos para las lecturas de los sensores.
+     *
+     * @return instancia de [SensorDao].
+     */
+    abstract fun sensorDao():             SensorDao
 
-    abstract fun notificacionDao(): NotificacionDao
+    /**
+     * provee el objeto de acceso a datos para el historial de notificaciones.
+     *
+     * @return instancia de [NotificacionDao].
+     */
+    abstract fun notificacionDao():       NotificacionDao
 
-    abstract fun seguimientoDao(): SeguimientoDao
+    /**
+     * provee el objeto de acceso a datos para los eventos de seguimiento de alertas.
+     *
+     * @return instancia de [SeguimientoDao].
+     */
+    abstract fun seguimientoDao():        SeguimientoDao
 
-    abstract fun alertaOficialDao(): AlertaOficialDao
+    /**
+     * provee el objeto de acceso a datos para las alertas oficiales recibidas.
+     *
+     * @return instancia de [AlertaOficialDao].
+     */
+    abstract fun alertaOficialDao():      AlertaOficialDao
 
+    /**
+     * provee el objeto de acceso a datos para el historial general de ubicación.
+     *
+     * @return instancia de [HistorialUbicacionDao].
+     */
     abstract fun historialUbicacionDao(): HistorialUbicacionDao
 
-    abstract fun familiaDao(): FamiliaDao
+    /**
+     * provee el objeto de acceso a datos para la gestión de grupos familiares.
+     *
+     * @return instancia de [FamiliaDao].
+     */
+    abstract fun familiaDao():            FamiliaDao
 
-    abstract fun familiaUsuarioDao(): FamiliaUsuarioDao
+    /**
+     * provee el objeto de acceso a datos para las relaciones entre miembros y grupos familiares.
+     *
+     * @return instancia de [FamiliaUsuarioDao].
+     */
+    abstract fun familiaUsuarioDao():     FamiliaUsuarioDao
 
-    abstract fun llamada911Dao(): Llamada911Dao
+    /**
+     * provee el objeto de acceso a datos para el registro de llamadas al 911.
+     *
+     * @return instancia de [Llamada911Dao].
+     */
+    abstract fun llamada911Dao():         Llamada911Dao
 
+    // ── Singleton ─────────────────────────────────────────────────────────────
+    companion object {
+        /**
+         * instancia única almacenada en memoria de la base de datos [AppDatabase].
+         */
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        /**
+         * obtiene la instancia singleton existente o crea una nueva utilizando el contexto de la aplicación.
+         *
+         * @param context contexto de la aplicación para inicializar la base de datos de room.
+         * @return la instancia única de [AppDatabase].
+         */
+        fun getInstance(context: Context): AppDatabase =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "compasos.db"
+                )
+                    .fallbackToDestructiveMigration() // ← evita crash si sube version sin Migration
+                    .build()
+                    .also { INSTANCE = it }
+            }
+    }
 }
