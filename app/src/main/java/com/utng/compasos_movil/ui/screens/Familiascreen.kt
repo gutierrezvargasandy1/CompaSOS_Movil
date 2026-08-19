@@ -36,6 +36,14 @@ import com.utng.compasos_movil.data.entity.UsuarioEntity
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
 
+/**
+ * pantalla principal del módulo de familia que muestra los grupos familiares vinculados, sus miembros y opciones para crear e invitar usuarios.
+ *
+ * @param navController controlador opcional para gestionar la navegación entre pantallas.
+ * @param usuarioDao acceso a datos de los usuarios en la base de datos local room.
+ * @param familiaDao acceso a datos de los grupos familiares en la base de datos local room.
+ * @param familiaUsuarioDao acceso a la relación entre familias y usuarios en la base de datos local room.
+ */
 @Composable
 fun FamiliaScreen(
     navController: NavController? = null,
@@ -134,6 +142,11 @@ fun FamiliaScreen(
 // COMPOSABLES PRIVADOS — sin cambios respecto a la versión anterior
 // ============================================================
 
+/**
+ * componente composable privado que muestra el encabezado con la información e icono del usuario actual.
+ *
+ * @param usuario información de la entidad [UsuarioEntity] del usuario autenticado.
+ */
 @Composable
 private fun HeaderFamilia(usuario: UsuarioEntity?) {
     Surface(modifier = Modifier.fillMaxWidth(), color = CompaSOSColors.FieldBackground) {
@@ -171,6 +184,11 @@ private fun HeaderFamilia(usuario: UsuarioEntity?) {
     }
 }
 
+/**
+ * componente composable privado que muestra una vista informativa cuando el usuario no pertenece a ninguna familia.
+ *
+ * @param onCrear callback invocado al presionar el botón para crear una nueva familia.
+ */
 @Composable
 private fun EmptyFamilia(onCrear: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -210,6 +228,13 @@ private fun EmptyFamilia(onCrear: () -> Unit) {
     }
 }
 
+/**
+ * componente composable privado que renderiza una tarjeta informativa con los datos de un grupo familiar y sus miembros.
+ *
+ * @param familia entidad [FamiliaEntity] que contiene los datos del grupo familiar.
+ * @param miembros lista de objetos [MiembroConDatos] asociados a la familia.
+ * @param onInvitar callback invocado para abrir el diálogo de invitación de un nuevo miembro.
+ */
 @Composable
 private fun FamiliaCard(
     familia: FamiliaEntity,
@@ -325,6 +350,12 @@ private fun FamiliaCard(
     }
 }
 
+/**
+ * componente composable privado que presenta un diálogo modal para ingresar el nombre y registrar un nuevo grupo familiar.
+ *
+ * @param onConfirmar callback que recibe el nombre ingresado y procesa la creación de la familia.
+ * @param onCancelar callback invocado para descartar o cerrar el diálogo modal.
+ */
 @Composable
 private fun CrearFamiliaDialog(
     onConfirmar: (String) -> Unit,
@@ -376,6 +407,16 @@ private fun CrearFamiliaDialog(
     }
 }
 
+/**
+ * componente composable privado que presenta un diálogo modal de búsqueda para encontrar e invitar usuarios a una familia.
+ *
+ * @param familia entidad [FamiliaEntity] a la cual se invitará al nuevo integrante.
+ * @param resultados lista de entidades [UsuarioEntity] coincidentes con la búsqueda.
+ * @param buscando indicador booleano de estado de carga en la búsqueda.
+ * @param onBuscar callback invocado con el texto de consulta para iniciar la búsqueda de usuarios.
+ * @param onAgregar callback invocado al seleccionar un usuario para añadirlo a la familia.
+ * @param onCerrar callback invocado para cerrar y limpiar el diálogo modal.
+ */
 @Composable
 private fun InvitarMiembroDialog(
     familia: FamiliaEntity,
@@ -461,6 +502,12 @@ private fun InvitarMiembroDialog(
     }
 }
 
+/**
+ * componente composable privado que muestra la información de un usuario hallado en la búsqueda y un botón para agregarlo.
+ *
+ * @param usuario datos de la entidad [UsuarioEntity] correspondiente al resultado.
+ * @param onAgregar callback invocado para agregar al usuario a la familia seleccionada.
+ */
 @Composable
 private fun ResultadoUsuario(usuario: UsuarioEntity, onAgregar: () -> Unit) {
     Surface(
@@ -489,6 +536,12 @@ private fun ResultadoUsuario(usuario: UsuarioEntity, onAgregar: () -> Unit) {
     }
 }
 
+/**
+ * componente composable privado que muestra la barra inferior con botones de navegación y creación de un nuevo grupo.
+ *
+ * @param navController controlador opcional para retroceder en la pila de navegación.
+ * @param onAgregar callback invocado al presionar el botón para crear un nuevo grupo familiar.
+ */
 @Composable
 private fun FooterFamilia(
     navController: NavController? = null,
@@ -516,6 +569,11 @@ private fun FooterFamilia(
     }
 }
 
+/**
+ * función helper composable privada que define la paleta de colores personalizada para los campos de texto [OutlinedTextField].
+ *
+ * @return un objeto [TextFieldColors] con el esquema de colores configurado.
+ */
 @Composable
 private fun campoColores() = OutlinedTextFieldDefaults.colors(
     focusedTextColor       = CompaSOSColors.TextPrimary,

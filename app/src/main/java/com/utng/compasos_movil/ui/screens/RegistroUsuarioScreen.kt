@@ -39,8 +39,12 @@ import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
 
 /**
- * RegistroUsuarioScreen integrado con AuthViewModel
- * Maneja registro, validaciones, estados de carga y errores
+ * pantalla de registro de usuarios integrada con [AuthViewModel].
+ * maneja el formulario de captura de datos, validaciones de campos obligatorios y contraseñas,
+ * junto con la gestión de estados de carga, respuestas de éxito o errores al crear la cuenta.
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param authViewModel viewModel encargado de la lógica de negocio de autenticación y registro.
  */
 @Composable
 fun RegistroUsuarioScreen(
@@ -310,7 +314,19 @@ fun RegistroUsuarioScreen(
 }
 
 /**
- * Campo de texto reutilizable
+ * campo de texto reutilizable estructurado para el formulario de captura de datos.
+ *
+ * @param value valor de texto actual dentro del campo.
+ * @param onValueChange callback invocado al modificarse el valor del texto.
+ * @param placeholder texto descriptivo de sugerencia cuando el campo está vacío.
+ * @param icon icono vectorial representativo mostrado al inicio del campo.
+ * @param keyboardType tipo de teclado virtual a solicitar al sistema.
+ * @param isPassword bandera que determina si el campo debe ocultar los caracteres ingresados.
+ * @param passwordVisible estado que controla si la contraseña se muestra en texto plano.
+ * @param onTogglePasswordVisibility callback opcional ejecutado al presionar el icono para alternar visibilidad.
+ * @param readOnly define si el contenido es únicamente de lectura.
+ * @param enabled indica si el campo permite interacción por parte del usuario.
+ * @param onClick callback opcional ejecutado al hacer clic sobre el campo.
  */
 @Composable
 private fun CompaSOSTextField(

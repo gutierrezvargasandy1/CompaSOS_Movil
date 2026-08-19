@@ -36,7 +36,11 @@ import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
 import com.utng.compasos_movil.utils.SessionManager
 
 /**
- * Factory para EditProfileViewModel
+ * fábrica para la creación e inyección de dependencias en [EditProfileViewModel].
+ *
+ * @property usuarioRepository repositorio para operaciones relativas a los datos de usuario.
+ * @property perfilMedicoRepository repositorio para operaciones de información médica.
+ * @property sessionManager gestor de la sesión local activa.
  */
 class EditProfileViewModelFactory(
     private val usuarioRepository: UsuarioRepository,
@@ -44,6 +48,12 @@ class EditProfileViewModelFactory(
     private val sessionManager: SessionManager
 ) : androidx.lifecycle.ViewModelProvider.Factory {
 
+    /**
+     * instancia una nueva instancia de [EditProfileViewModel] previa verificación de clase.
+     *
+     * @param modelClass tipo de clase viewmodel solicitada.
+     * @return objeto instanciado correspondiente a [EditProfileViewModel].
+     */
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(EditProfileViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
@@ -58,7 +68,12 @@ class EditProfileViewModelFactory(
 }
 
 /**
- * Pantalla para editar el perfil del usuario
+ * pantalla composable para editar el perfil personal y la información médica del usuario.
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param usuarioRepository acceso a los datos y repositorios de usuario.
+ * @param perfilMedicoRepository acceso a la información y expediente médico.
+ * @param sessionManager gestor de la sesión local actual.
  */
 @Composable
 fun EditProfileScreen(
@@ -370,8 +385,14 @@ fun EditProfileScreen(
 }
 
 /**
- * Campo de texto reutilizable para edición de perfil
- * Versión simplificada (sin password, sin custom validaciones)
+ * componente composable privado para renderizar un campo de entrada de texto estandarizado en el formulario de edición.
+ *
+ * @param value contenido textual del campo.
+ * @param onValueChange callback emitido ante cambios en el texto ingresado.
+ * @param placeholder texto orientativo que se muestra cuando el campo está vacío.
+ * @param icon icono vectorial opcional situado al inicio del campo.
+ * @param keyboardType tipo de teclado asignado al campo de entrada.
+ * @param enabled estado de interacción que determina si el campo permite edición.
  */
 @Composable
 private fun EditProfileTextField(

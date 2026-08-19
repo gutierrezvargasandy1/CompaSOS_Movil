@@ -38,10 +38,23 @@ import com.utng.compasos_movil.navigation.Screen
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
 
+/** color que representa el estado exitoso de una notificación. */
 private val ExitoColor      = Color(0xFF4CAF50)
+
+/** color que representa el estado pendiente o en proceso de una notificación. */
 private val PendienteColor  = Color(0xFFFFA726)
+
+/** color que representa el estado fallido o con error de una notificación. */
 private val ErrorColorNotif = Color(0xFFE53935)
 
+/**
+ * pantalla principal para la visualización del historial de notificaciones enviadas y alertas vinculadas.
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param notificacionDao acceso a datos de notificaciones en la base de datos local room.
+ * @param alertaDao acceso a datos de alertas en la base de datos local room.
+ * @param usuarioDao acceso a datos de usuarios en la base de datos local room.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificacionesScreen(
@@ -132,6 +145,11 @@ fun NotificacionesScreen(
 
 // ── Composables privados ──────────────────────────────────────────────────────
 
+/**
+ * componente composable privado que despliega un mensaje informativo cuando no hay notificaciones registradas.
+ *
+ * @param modifier modificador de diseño opcional para ajustar la presentación del componente.
+ */
 @Composable
 private fun EstadoSinNotificaciones(modifier: Modifier = Modifier) {
     Column(
@@ -169,6 +187,12 @@ private fun EstadoSinNotificaciones(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * componente composable privado que renderiza la tarjeta individual de una notificación con su estado y detalles de alerta.
+ *
+ * @param item contenedor de datos [NotificacionConAlerta] con información de la notificación y su alerta asociada.
+ * @param onVerDetalle callback invocado al presionar la tarjeta para navegar al detalle de la alerta.
+ */
 @Composable
 private fun TarjetaNotificacion(
     item:         NotificacionConAlerta,
@@ -256,6 +280,12 @@ private fun TarjetaNotificacion(
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
+/**
+ * función helper privada que mapea el estado textual de una notificación a su icono vectorial y color representativo.
+ *
+ * @param estado texto descriptivo del estado de la notificación.
+ * @return un par [Pair] que contiene el icono vectorial [ImageVector] y el color [Color] asignado al estado.
+ */
 private fun estiloEstado(estado: String?): Pair<ImageVector, Color> {
     return when (estado?.trim()?.lowercase()) {
         "enviada", "enviado", "entregada", "entregado", "completada", "exitosa" ->

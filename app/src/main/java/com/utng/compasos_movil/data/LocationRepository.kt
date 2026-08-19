@@ -10,15 +10,34 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import java.util.concurrent.TimeUnit
 
+/**
+ * modelo de datos que representa una coordenada de ubicación geográfica simplificada.
+ *
+ * @property latitud coordenada de latitud geográfica en grados decimales.
+ * @property longitud coordenada de longitud geográfica en grados decimales.
+ */
 data class UbicacionActual(
     val latitud: Double,
     val longitud: Double
 )
 
+/**
+ * repositorio encargado de proveer y gestionar el acceso a los servicios de localización geográfica del dispositivo.
+ *
+ * @property context contexto de la aplicación para inicializar el cliente de localización.
+ */
 class LocationRepository(private val context: Context) {
 
+    /**
+     * cliente de proveedor de ubicación fusionada de google play services.
+     */
     private val fusedClient = LocationServices.getFusedLocationProviderClient(context)
 
+    /**
+     * emite un flujo continuo ([Flow]) con las coordenadas actualizadas en tiempo real del dispositivo.
+     *
+     * @return un flujo [Flow] que emite objetos [UbicacionActual] a medida que se capturan lecturas de GPS.
+     */
     @SuppressLint("MissingPermission")
     fun ubicacionEnVivo(): Flow<UbicacionActual> = callbackFlow {
         val request = LocationRequest.Builder(
@@ -45,6 +64,11 @@ class LocationRepository(private val context: Context) {
         awaitClose { fusedClient.removeLocationUpdates(callback) }
     }
 
+    /**
+     * obtiene de forma síncrona la última ubicación registrada disponible con un tiempo límite de espera.
+     *
+     * @return la [UbicacionActual] más reciente conocida o null si falla o se agota el tiempo de espera.
+     */
     @SuppressLint("MissingPermission")
     fun obtenerUltimaUbicacion(): UbicacionActual? {
         return try {

@@ -35,21 +35,47 @@ import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import kotlinx.coroutines.delay
 
 /**
- * Tipos de aviso soportados. Cada uno trae su propio color e ícono,
- * pero comparten la misma forma/tipografía que el resto de los componentes de CompaSOS.
+ * enumeración que define los tipos de aviso o alerta soportados en la interfaz.
  */
 enum class CompaSOSAlertType {
+    /**
+     * aviso de éxito para operaciones completadas correctamente.
+     */
     Exito,
+
+    /**
+     * aviso de error para indicar fallas o validaciones no superadas.
+     */
     Error,
+
+    /**
+     * aviso de advertencia para alertar sobre situaciones precautorias.
+     */
     Advertencia,
+
+    /**
+     * aviso informativo para entregar detalles o estados generales.
+     */
     Info
 }
 
+/**
+ * clase de datos privada que encapsula la configuración visual de estilo para un aviso.
+ *
+ * @property color color distintivo aplicado al fondo e ícono del aviso.
+ * @property icon vector de imagen representado en el aviso.
+ */
 private data class AlertStyle(
     val color: Color,
     val icon: ImageVector
 )
 
+/**
+ * determina el estilo visual (color e ícono) correspondiente según el tipo de alerta provisto.
+ *
+ * @param tipo tipo de alerta [CompaSOSAlertType] a evaluar.
+ * @return estructura [AlertStyle] con el color e ícono configurados.
+ */
 private fun estiloPara(tipo: CompaSOSAlertType): AlertStyle = when (tipo) {
     CompaSOSAlertType.Exito -> AlertStyle(Color(0xFF4CAF50), Icons.Filled.CheckCircle)
     CompaSOSAlertType.Error -> AlertStyle(Color(0xFFEF5350), Icons.Filled.Error)
@@ -58,16 +84,13 @@ private fun estiloPara(tipo: CompaSOSAlertType): AlertStyle = when (tipo) {
 }
 
 /**
- * Aviso tipo "banner" para insertar dentro de un formulario o pantalla,
- * por ejemplo debajo de un campo de contraseña o arriba de un botón de enviar.
+ * componente composable de aviso tipo banner para mostrar dentro de formularios o contenedores.
  *
- * Ejemplo (reemplaza el Text de error suelto en RegistroUsuarioScreen):
- *
- * CompaSOSAlertBanner(
- *     mensaje = "Las contraseñas no coinciden",
- *     tipo = CompaSOSAlertType.Error,
- *     visible = mostrarErrorPasswords
- * )
+ * @param mensaje texto explicativo que se despliega en el banner.
+ * @param tipo categoría de la alerta que define el estilo e ícono.
+ * @param visible determina si el banner debe mostrarse u ocultarse con animación.
+ * @param onCerrar función opcional invocada al presionar el botón de cierre.
+ * @param modifier modificador de composición para personalizar el diseño externo.
  */
 @Composable
 fun CompaSOSAlertBanner(
@@ -127,23 +150,14 @@ fun CompaSOSAlertBanner(
 }
 
 /**
- * Aviso tipo "toast" flotante, pensado para colocarse encima de todo el
- * contenido (por ejemplo dentro de un Box que envuelva la pantalla completa),
- * y que se oculta solo después de [duracionMs].
+ * componente composable de aviso flotante tipo toast que se oculta automáticamente tras una duración.
  *
- * Ejemplo, envolviendo la pantalla en un Box:
- *
- * Box(Modifier.fillMaxSize()) {
- *     // ...contenido de la pantalla...
- *
- *     CompaSOSAlertToast(
- *         mensaje = "Registro exitoso",
- *         tipo = CompaSOSAlertType.Exito,
- *         visible = mostrarToast,
- *         onFinalizar = { mostrarToast = false },
- *         modifier = Modifier.align(Alignment.TopCenter)
- *     )
- * }
+ * @param mensaje contenido textual del mensaje de alerta.
+ * @param tipo tipo de alerta que define la identidad gráfica del mensaje.
+ * @param visible indica si el mensaje flotante está visible en la interfaz.
+ * @param onFinalizar callback ejecutado automáticamente al finalizar la duración del mensaje.
+ * @param duracionMs tiempo de visibilidad en milisegundos antes de ocultar.
+ * @param modifier modificador para ajustar la posición o margen del componente.
  */
 @Composable
 fun CompaSOSAlertToast(
@@ -197,22 +211,11 @@ fun CompaSOSAlertToast(
 }
 
 /**
- * Recordatorio de estado simple para controlar un CompaSOSAlertToast desde
- * cualquier pantalla sin repetir boilerplate.
+ * clase gestora de estado para simplificar el control de visualización de alertas toast.
  *
- * Ejemplo de uso:
- *
- * val avisoState = rememberCompaSOSAlertState()
- * // al hacer login exitoso:
- * avisoState.mostrar("Bienvenido de nuevo", CompaSOSAlertType.Exito)
- * // en el Box raíz de la pantalla:
- * CompaSOSAlertToast(
- *     mensaje = avisoState.mensaje,
- *     tipo = avisoState.tipo,
- *     visible = avisoState.visible,
- *     onFinalizar = avisoState::ocultar,
- *     modifier = Modifier.align(Alignment.TopCenter)
- * )
+ * @property visible indica la visibilidad actual del aviso.
+ * @property mensaje texto configurado actualmente en la alerta.
+ * @property tipo categoría actual de la alerta.
  */
 class CompaSOSAlertState {
     var visible by mutableStateOf(false)
@@ -222,16 +225,30 @@ class CompaSOSAlertState {
     var tipo by mutableStateOf(CompaSOSAlertType.Info)
         private set
 
+    /**
+     * activa y muestra la alerta con el mensaje y tipo especificados.
+     *
+     * @param mensaje contenido del aviso a presentar.
+     * @param tipo categoría visual para el aviso.
+     */
     fun mostrar(mensaje: String, tipo: CompaSOSAlertType = CompaSOSAlertType.Info) {
         this.mensaje = mensaje
         this.tipo = tipo
         this.visible = true
     }
 
+    /**
+     * oculta la alerta en pantalla.
+     */
     fun ocultar() {
         visible = false
     }
 }
 
+/**
+ * función composable helper para recordar y mantener una instancia de [CompaSOSAlertState].
+ *
+ * @return instancia persistente de [CompaSOSAlertState] durante las recomposiciones.
+ */
 @Composable
 fun rememberCompaSOSAlertState(): CompaSOSAlertState = remember { CompaSOSAlertState() }

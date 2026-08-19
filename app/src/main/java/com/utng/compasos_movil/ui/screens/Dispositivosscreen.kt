@@ -34,10 +34,28 @@ import com.utng.compasos_movil.data.entity.DispositivoEntity
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
 
+/**
+ * color para indicar operaciones exitosas o dispositivos conectados.
+ */
 private val ExitoColor        = Color(0xFF4CAF50)
+
+/**
+ * color para indicar un nivel medio de batería.
+ */
 private val BateriaMediaColor = Color(0xFFFFA726)
+
+/**
+ * color para indicar un nivel bajo de batería o estados de error.
+ */
 private val BateriaBajaColor  = Color(0xFFE53935)
 
+/**
+ * pantalla principal de gestión de dispositivos que lista los equipos vinculados y permite iniciar procesos de vinculación para wear os o pantallas tv.
+ *
+ * @param navController controlador para la navegación entre pantallas.
+ * @param dispositivoDao acceso a datos de dispositivos en la base de datos local room.
+ * @param usuarioDao acceso a datos de usuarios en la base de datos local room.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DispositivosScreen(
@@ -161,6 +179,13 @@ fun DispositivosScreen(
 // DIÁLOGO DE VINCULACIÓN
 // ============================================================
 
+/**
+ * componente modal que presenta el cuadro de diálogo para los distintos estados del proceso de vinculación.
+ *
+ * @param estado estado actual del proceso de vinculación ([EstadoVinculacion]).
+ * @param onCancelar callback invocado para cancelar el proceso activo de vinculación.
+ * @param onCerrar callback invocado para cerrar la ventana modal tras finalizar o fallar.
+ */
 @Composable
 private fun DialogVinculacion(
     estado: EstadoVinculacion,
@@ -195,6 +220,12 @@ private fun DialogVinculacion(
     }
 }
 
+/**
+ * componente composable privado que muestra el código numérico y los pasos para sincronizar un reloj wear os.
+ *
+ * @param codigo código numérico generado para la vinculación.
+ * @param onCancelar callback para cancelar la espera de confirmación.
+ */
 @Composable
 private fun ContenidoEsperando(codigo: String, onCancelar: () -> Unit) {
     Icon(
@@ -266,6 +297,12 @@ private fun ContenidoEsperando(codigo: String, onCancelar: () -> Unit) {
     }
 }
 
+/**
+ * componente composable privado para desplegar un paso numerado de las instrucciones de vinculación.
+ *
+ * @param numero secuencia o número del paso.
+ * @param texto indicación detallada del paso.
+ */
 @Composable
 private fun PasoInstruccion(numero: String, texto: String) {
     Row(
@@ -290,6 +327,12 @@ private fun PasoInstruccion(numero: String, texto: String) {
     }
 }
 
+/**
+ * componente composable privado que informa al usuario la vinculación exitosa del dispositivo.
+ *
+ * @param nombre nombre o descripción del dispositivo vinculado.
+ * @param onCerrar callback para descartar la ventana de diálogo.
+ */
 @Composable
 private fun ContenidoExitoso(nombre: String, onCerrar: () -> Unit) {
     Box(
@@ -335,6 +378,12 @@ private fun ContenidoExitoso(nombre: String, onCerrar: () -> Unit) {
     }
 }
 
+/**
+ * componente composable privado que muestra un estado de error surgido durante el proceso de vinculación.
+ *
+ * @param mensaje texto con la descripción detallada del problema.
+ * @param onCerrar callback para cerrar la ventana modal de error.
+ */
 @Composable
 private fun ContenidoError(mensaje: String, onCerrar: () -> Unit) {
     Box(
@@ -372,6 +421,12 @@ private fun ContenidoError(mensaje: String, onCerrar: () -> Unit) {
 // COMPOSABLES PRIVADOS (sin cambios de lógica)
 // ============================================================
 
+/**
+ * componente composable privado que se muestra cuando la lista de dispositivos vinculados está vacía.
+ *
+ * @param modifier modificador de diseño del contenedor.
+ * @param onVincular callback para activar la acción de vincular un dispositivo.
+ */
 @Composable
 private fun EstadoSinDispositivos(modifier: Modifier = Modifier, onVincular: () -> Unit) {
     Column(
@@ -419,6 +474,11 @@ private fun EstadoSinDispositivos(modifier: Modifier = Modifier, onVincular: () 
     }
 }
 
+/**
+ * componente composable privado que renderiza la tarjeta individual de un dispositivo vinculado con su estado y nivel de batería.
+ *
+ * @param item estructura [DispositivoConUsuario] con los datos del dispositivo y su usuario asociado.
+ */
 @Composable
 private fun TarjetaDispositivo(item: DispositivoConUsuario) {
     val dispositivo   = item.dispositivo
@@ -488,6 +548,12 @@ private fun TarjetaDispositivo(item: DispositivoConUsuario) {
     }
 }
 
+/**
+ * retorna el icono vectorial adecuado de acuerdo al tipo de dispositivo recibido.
+ *
+ * @param tipo tipo o categoría del dispositivo en formato texto.
+ * @return icono vectorial [ImageVector] representativo.
+ */
 private fun iconoTipo(tipo: String?): ImageVector = when (tipo?.trim()?.lowercase()) {
     "reloj", "smartwatch", "watch"                           -> Icons.Filled.Watch
     "telefono", "teléfono", "celular", "smartphone", "phone" -> Icons.Filled.Smartphone
@@ -495,6 +561,12 @@ private fun iconoTipo(tipo: String?): ImageVector = when (tipo?.trim()?.lowercas
     else                                                      -> Icons.Filled.DeviceUnknown
 }
 
+/**
+ * determina el color según el nivel de porcentaje de batería.
+ *
+ * @param pct porcentaje de batería del dispositivo (0-100).
+ * @return [Color] acorde al nivel de carga.
+ */
 private fun colorBateria(pct: Int): Color = when {
     pct <= 20 -> BateriaBajaColor
     pct <= 50 -> BateriaMediaColor

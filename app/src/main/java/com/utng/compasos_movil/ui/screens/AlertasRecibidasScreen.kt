@@ -46,17 +46,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
+/**
+ * color distintivo asignado a las alertas de emergencia.
+ */
 private val RojoAlerta = Color(0xFFE53935)
+
+/**
+ * etiqueta utilizada para la depuración en logcat.
+ */
 private const val TAG  = "AlertasRecibidas"
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
+/**
+ * representa un elemento individual de la lista de alertas recibidas con su información asociada.
+ *
+ * @property notificacion entidad de la notificación de alerta guardada en la base de datos local.
+ * @property alerta entidad detallada de la alerta recibida o nulo si no se encuentra.
+ * @property emisorNombre nombre del usuario o familiar que generó la alerta.
+ */
 data class AlertaRecibidaItem(
     val notificacion: NotificacionEntity,
     val alerta:       AlertaEntity?,
     val emisorNombre: String?           // ← nombre de quien disparó la alerta
 )
 
+/**
+ * estado ui de la pantalla de alertas recibidas.
+ *
+ * @property cargando indica si los datos están siendo procesados o cargados desde room.
+ * @property alertas lista de elementos [AlertaRecibidaItem] para ser renderizada en la interfaz.
+ */
 data class AlertasRecibidasState(
     val cargando: Boolean                  = true,
     val alertas:  List<AlertaRecibidaItem> = emptyList()
@@ -64,6 +84,15 @@ data class AlertasRecibidasState(
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
+/**
+ * viewmodel responsable de obtener y observar las alertas recibidas por el usuario autenticado.
+ *
+ * @param application instancia de la aplicación android.
+ * @property notificacionDao dao para acceder a las notificaciones recibidas en la base de datos.
+ * @property alertaDao dao para consultar la información específica de las alertas.
+ * @property usuarioDao dao para recuperar la información del emisor de la alerta.
+ * @property sessionManager gestor de sesión para obtener el identificador del usuario activo.
+ */
 class AlertasRecibidasViewModel(
     application:                 Application,
     private val notificacionDao: NotificacionDao,
@@ -72,11 +101,22 @@ class AlertasRecibidasViewModel(
     private val sessionManager:  SessionManager
 ) : AndroidViewModel(application) {
 
+    /**
+     * flujo interno mutable para gestionar el estado de las alertas recibidas.
+     */
     private val _state = MutableStateFlow(AlertasRecibidasState())
+
+    /**
+     * flujo observable público para consumir el estado en la interfaz de usuario.
+     */
     val state: StateFlow<AlertasRecibidasState> = _state.asStateFlow()
 
     init { observar() }
 
+    /**
+     * observa en tiempo real las notificaciones emitidas por el dao de room para el usuario actual,
+     * relacionando cada notificación con su alerta y el nombre del usuario emisor.
+     */
     private fun observar() {
         viewModelScope.launch {
             val userId = sessionManager.obtenerUsuarioId()
@@ -123,6 +163,15 @@ class AlertasRecibidasViewModel(
         }
     }
 
+    /**
+     * fábrica para crear instancias del viewmodel [AlertasRecibidasViewModel] con sus dependencias requeridas.
+     *
+     * @property app instancia de la aplicación android.
+     * @property notificacionDao dao de notificaciones.
+     * @property alertaDao dao de alertas.
+     * @property usuarioDao dao de usuarios.
+     * @property sessionManager gestor de sesión.
+     */
     class Factory(
         private val app:             Application,
         private val notificacionDao: NotificacionDao,
@@ -130,6 +179,12 @@ class AlertasRecibidasViewModel(
         private val usuarioDao:      UsuarioDao,   // ← nuevo
         private val sessionManager:  SessionManager
     ) : ViewModelProvider.Factory {
+        /**
+         * crea una nueva instancia de [AlertasRecibidasViewModel].
+         *
+         * @param modelClass tipo de clase del viewmodel.
+         * @return instancia de [AlertasRecibidasViewModel].
+         */
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             AlertasRecibidasViewModel(
@@ -140,6 +195,15 @@ class AlertasRecibidasViewModel(
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
+/**
+ * componente composable principal que muestra la lista de alertas enviadas por familiares,
+ * permitiendo navegar al detalle de cada una.
+ *
+ * @param navController controlador de navegación.
+ * @param notificacionDao dao para acceso a notificaciones.
+ * @param alertaDao dao para acceso a alertas.
+ * @param usuarioDao dao para acceso a la información de usuarios.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertasRecibidasScreen(
@@ -236,6 +300,11 @@ fun AlertasRecibidasScreen(
 
 // ── Composables privados ──────────────────────────────────────────────────────
 
+/**
+ * componente composable privado que muestra un estado vacío informando que no existen alertas recibidas.
+ *
+ * @param modifier modificador de composición para ajustar la posición o espacio del componente.
+ */
 @Composable
 private fun SinAlertasRecibidas(modifier: Modifier = Modifier) {
     Column(
@@ -272,6 +341,12 @@ private fun SinAlertasRecibidas(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * componente composable privado que renderiza la tarjeta individual para una alerta recibida.
+ *
+ * @param item contenedor con la información de la notificación, la alerta y el emisor.
+ * @param onVerDetalle función invocada al solicitar la navegación al detalle de la alerta.
+ */
 @Composable
 private fun AlertaRecibidaCard(
     item:         AlertaRecibidaItem,

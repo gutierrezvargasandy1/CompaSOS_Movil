@@ -35,6 +35,14 @@ import com.utng.compasos_movil.data.entity.UsuarioEntity
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
 
+/**
+ * componente composable principal para la pantalla de contactos de emergencia.
+ * gestiona la visualización de contactos registrados, estado de carga y la activación del diálogo para agregar nuevos elementos.
+ *
+ * @param navController controlador opcional de navegación.
+ * @param usuarioDao dao para la consulta de información del usuario.
+ * @param contactoEmergenciaDao dao para la gestión de datos de contactos de emergencia.
+ */
 @Composable
 fun ContactosEmergenciaScreen(
     navController: NavController? = null,
@@ -130,6 +138,11 @@ fun ContactosEmergenciaScreen(
 // COMPOSABLES PRIVADOS
 // ============================================================
 
+/**
+ * componente composable privado que muestra el encabezado con el nombre del usuario actual.
+ *
+ * @param usuario entidad del usuario autenticado o nulo si no existe información cargada.
+ */
 @Composable
 private fun HeaderContactos(usuario: UsuarioEntity?) {
     Surface(modifier = Modifier.fillMaxWidth(), color = CompaSOSColors.FieldBackground) {
@@ -171,6 +184,11 @@ private fun HeaderContactos(usuario: UsuarioEntity?) {
     }
 }
 
+/**
+ * componente composable privado para renderizar la tarjeta individual con los datos de un contacto.
+ *
+ * @param contacto entidad de contacto de emergencia con la información a desplegar.
+ */
 @Composable
 private fun ContactoCard(contacto: ContactoEmergenciaEntity) {
     Surface(
@@ -266,6 +284,12 @@ private fun ContactoCard(contacto: ContactoEmergenciaEntity) {
     }
 }
 
+/**
+ * componente composable privado que muestra un diálogo emergente para capturar los datos de un nuevo contacto de emergencia.
+ *
+ * @param onConfirmar callback con los datos introducidos para la creación del contacto.
+ * @param onCancelar callback para desestimar y cerrar el diálogo.
+ */
 @Composable
 private fun AgregarContactoDialog(
     onConfirmar: (String, String, String?, String?, Int?) -> Unit,
@@ -399,6 +423,12 @@ private fun AgregarContactoDialog(
     }
 }
 
+/**
+ * componente composable privado que renderiza la barra inferior de botones para la pantalla de contactos.
+ *
+ * @param navController controlador opcional de navegación para regresar.
+ * @param onAgregar callback invocado para solicitar el despliegue del diálogo de alta.
+ */
 @Composable
 private fun FooterContactos(
     navController: NavController? = null,
@@ -426,6 +456,11 @@ private fun FooterContactos(
     }
 }
 
+/**
+ * función composable de utilidad que define la paleta de colores común para los campos de texto [OutlinedTextField].
+ *
+ * @return configuración de colores reutilizable [TextFieldColors] basada en la paleta del sistema [CompaSOSColors].
+ */
 @Composable
 private fun campoColores() = OutlinedTextFieldDefaults.colors(
     focusedTextColor        = CompaSOSColors.TextPrimary,

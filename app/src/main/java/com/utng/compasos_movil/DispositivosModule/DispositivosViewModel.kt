@@ -27,18 +27,56 @@ import java.util.*
 // MODELOS DE ESTADO
 // ============================================================
 
+/**
+ * modelo de datos que combina la información de un dispositivo con los datos del usuario asociado.
+ *
+ * @property dispositivo entidad [DispositivoEntity] que contiene los detalles del dispositivo.
+ * @property usuario entidad [UsuarioEntity] opcional del usuario vinculado al dispositivo.
+ */
 data class DispositivoConUsuario(
     val dispositivo: DispositivoEntity,
     val usuario: UsuarioEntity? = null
 )
 
+/**
+ * clase sellada que representa las distintas fases del proceso de vinculación de un dispositivo Wear OS.
+ */
 sealed class EstadoVinculacion {
+    /**
+     * estado que indica que no hay ningún proceso de vinculación en curso.
+     */
     object Inactivo : EstadoVinculacion()
+
+    /**
+     * estado que indica la espera de la confirmación desde el dispositivo Wear OS con un código generado.
+     *
+     * @property codigo código alfanumérico generado para realizar el emparejamiento.
+     */
     data class EsperandoWearOS(val codigo: String) : EstadoVinculacion()
+
+    /**
+     * estado que confirma la vinculación exitosa de un dispositivo.
+     *
+     * @property nombreDispositivo nombre o descripción del dispositivo vinculado.
+     */
     data class Exitosa(val nombreDispositivo: String) : EstadoVinculacion()
+
+    /**
+     * estado que notifica un error durante el proceso de vinculación.
+     *
+     * @property mensaje descripción del fallo ocurrido.
+     */
     data class Error(val mensaje: String) : EstadoVinculacion()
 }
 
+/**
+ * estado de la interfaz de usuario para la pantalla de gestión de dispositivos.
+ *
+ * @property cargando indica si la lista de dispositivos está cargando información.
+ * @property dispositivos lista de dispositivos vinculados con su información de usuario.
+ * @property estadoVinculacion estado actual del proceso de emparejamiento.
+ * @property mqttConectado estado de la conexión con el servicio broker mqtt.
+ */
 data class DispositivosUiState(
     val cargando: Boolean = true,
     val dispositivos: List<DispositivoConUsuario> = emptyList(),
@@ -50,6 +88,14 @@ data class DispositivosUiState(
 // VIEWMODEL
 // ============================================================
 
+/**
+ * viewmodel responsable de gestionar la lógica de negocio para la administración de dispositivos,
+ * el flujo de vinculación mediante mqtt y la actualización del estado de los dispositivos.
+ *
+ * @property dispositivoDao acceso a los datos de dispositivos en la base de datos local.
+ * @property usuarioDao acceso a los datos del usuario en la base de datos local.
+ * @property sessionManager gestor para obtener los datos de la sesión actual del usuario.
+ */
 class DispositivosViewModel(
     private val dispositivoDao: DispositivoDao,
     private val usuarioDao: UsuarioDao,
@@ -57,16 +103,40 @@ class DispositivosViewModel(
 ) : ViewModel() {
 
     companion object {
+        /**
+         * etiqueta utilizada para los registros de log del viewmodel.
+         */
         private const val TAG = "DispositivosVM"
+
+        /**
+         * tiempo máximo de espera para completar la vinculación en milisegundos (2 minutos).
+         */
         private const val TIMEOUT_VINCULACION_MS = 120_000L  // 2 minutos
     }
 
+    /**
+     * gestor de conexión y suscripciones mqtt.
+     */
     private val mqtt = MqttManager()
 
+    /**
+     * flujo interno mutable para el estado de la interfaz de usuario.
+     */
     private val _uiState = MutableStateFlow(DispositivosUiState())
+
+    /**
+     * flujo observable público con el estado actual de la interfaz de usuario.
+     */
     val uiState: StateFlow<DispositivosUiState> = _uiState.asStateFlow()
 
+    /**
+     * código de vinculación activo en el proceso actual.
+     */
     private var codigoActivo: String? = null
+
+    /**
+     * trabajo en corrutina que controla el tiempo límite de la vinculación.
+     */
     private var timeoutJob: Job? = null
 
     init {
@@ -78,6 +148,9 @@ class DispositivosViewModel(
     // MQTT
     // ============================================================
 
+    /**
+     * establece la conexión con el broker mqtt e inicia las suscripciones correspondientes.
+     */
     private fun conectarMqtt() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -101,6 +174,12 @@ class DispositivosViewModel(
         }
     }
 
+    /**
+     * procesa el mensaje mqtt recibido sobre el estado de un dispositivo y actualiza la base de datos local.
+     *
+     * @param topic tópico mqtt en el que se recibió el mensaje.
+     * @param payload cadena json con los datos del estado del dispositivo.
+     */
     private suspend fun actualizarEstadoDesdePayload(topic: String, payload: String) {
         try {
             // Topic: compasos/dispositivo/{deviceId}/estado
@@ -120,6 +199,9 @@ class DispositivosViewModel(
     // ROOM
     // ============================================================
 
+    /**
+     * consulta y carga los dispositivos pertenecientes al usuario actual desde la base de datos.
+     */
     fun cargarDispositivos() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(cargando = true) }
@@ -142,6 +224,9 @@ class DispositivosViewModel(
     // VINCULACIÓN WEAR OS
     // ============================================================
 
+    /**
+     * inicia el proceso de vinculación con un reloj Wear OS enviando una solicitud por mqtt y esperando respuesta.
+     */
     fun iniciarVinculacion() {
         val userId = sessionManager.obtenerUsuarioId() ?: return
         val codigo = generarCodigo()
@@ -181,6 +266,11 @@ class DispositivosViewModel(
         }
     }
 
+    /**
+     * inicia el contador de tiempo límite para cancelar automáticamente el proceso de vinculación si no hay respuesta.
+     *
+     * @param codigo código de vinculación que se está validando.
+     */
     private fun iniciarTimeout(codigo: String) {
         timeoutJob?.cancel()
         timeoutJob = viewModelScope.launch {
@@ -209,6 +299,9 @@ class DispositivosViewModel(
      *   "fabricante":"Samsung",
      *   "bateria":   85
      * }
+     *
+     * @param payload datos de respuesta en formato json enviados por el dispositivo.
+     * @param codigoEsperado código alfanumérico que debe coincidir con el proceso en curso.
      */
     private suspend fun procesarRespuestaWearOS(payload: String, codigoEsperado: String) {
         if (codigoActivo != codigoEsperado) return
@@ -254,17 +347,28 @@ class DispositivosViewModel(
         }
     }
 
+    /**
+     * cancela el proceso de vinculación activo y limpia el estado actual.
+     */
     fun cancelarVinculacion() {
         val codigo = codigoActivo ?: return
         limpiarVinculacion(codigo)
         _uiState.update { it.copy(estadoVinculacion = EstadoVinculacion.Inactivo) }
     }
 
+    /**
+     * cierra el diálogo de vinculación restableciendo el estado a inactivo.
+     */
     fun cerrarDialogoVinculacion() {
         codigoActivo = null
         _uiState.update { it.copy(estadoVinculacion = EstadoVinculacion.Inactivo) }
     }
 
+    /**
+     * limpia las tareas temporales y quita la suscripción del canal mqtt de vinculación.
+     *
+     * @param codigo código de vinculación a desuscribir.
+     */
     private fun limpiarVinculacion(codigo: String) {
         timeoutJob?.cancel()
         timeoutJob = null
@@ -282,6 +386,9 @@ class DispositivosViewModel(
         return (1..6).map { chars.random() }.joinToString("")
     }
 
+    /**
+     * cancela corrutinas activas y desconecta el cliente mqtt al destruirse el viewmodel.
+     */
     override fun onCleared() {
         super.onCleared()
         timeoutJob?.cancel()
@@ -293,11 +400,24 @@ class DispositivosViewModel(
 // FACTORY
 // ============================================================
 
+/**
+ * fábrica de proveedores para instanciar [DispositivosViewModel] con sus dependencias necesarias.
+ *
+ * @property dispositivoDao acceso a la entidad de dispositivos en base de datos.
+ * @property usuarioDao acceso a la entidad de usuarios en base de datos.
+ * @property sessionManager administrador de la sesión de usuario activa.
+ */
 class DispositivosViewModelFactory(
     private val dispositivoDao: DispositivoDao,
     private val usuarioDao: UsuarioDao,
     private val sessionManager: SessionManager
 ) : ViewModelProvider.Factory {
+    /**
+     * crea una nueva instancia de la clase de viewmodel requerida.
+     *
+     * @param modelClass la clase del viewmodel a instanciar.
+     * @return una nueva instancia de [DispositivosViewModel].
+     */
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
         return DispositivosViewModel(

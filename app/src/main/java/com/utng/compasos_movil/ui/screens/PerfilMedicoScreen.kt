@@ -30,9 +30,17 @@ import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
 
 /**
- * Estado del formulario, alineado con la tabla `perfil_medico`.
+ * estado del formulario, alineado con la tabla `perfil_medico`.
  * `usuario_id` no se captura aquí: se asigna al guardar, usando el id del
  * usuario recién creado en el paso anterior (RegistroUsuarioScreen).
+ *
+ * @property tipoSangre tipo de sangre seleccionado por el usuario.
+ * @property alergias registro de alergias del usuario.
+ * @property padecimientos enfermedades o padecimientos crónicos declarados.
+ * @property medicamentos medicamentos de uso regular.
+ * @property peso peso en kilogramos en formato numérico (cadena convertible a double).
+ * @property altura altura en centímetros en formato numérico (cadena convertible a double).
+ * @property observaciones notas u observaciones médicas adicionales.
  */
 data class PerfilMedicoState(
     val tipoSangre: String = "",
@@ -44,13 +52,15 @@ data class PerfilMedicoState(
     val observaciones: String = ""
 )
 
+/** lista estática con las opciones de tipos de sangre disponibles en la aplicación. */
 private val tiposSangre = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 
 /**
- * onGuardar ahora devuelve un resultado (String?) para poder mostrar el
- * banner de error correspondiente si falla al guardar en el backend:
- *   - null        -> guardado exitoso
- *   - "mensaje..." -> guardado fallido, se muestra ese mensaje en el toast de error
+ * pantalla para el registro y gestión de la información del perfil médico del usuario.
+ * permite ingresar datos clínicos, validando formatos numéricos y gestionando el guardado o la omisión.
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param onGuardar función callback invocada al presionar guardar; retorna un mensaje de error si falla o null si es exitoso.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,12 +76,20 @@ fun PerfilMedicoScreen(
     // Todavía no existe una pantalla Home/Dashboard, así que por ahora regresamos
     // a Login limpiando el back stack. Cuando exista Home, cambia Screen.Login
     // por Screen.Home aquí.
+    /**
+     * navega hacia la pantalla inicial de inicio de sesión limpiando la pila de navegación previa.
+     */
     fun irAHome() {
         navController.navigate(Screen.Login.route) {
             popUpTo(Screen.Login.route) { inclusive = true }
         }
     }
 
+    /**
+     * verifica que los valores ingresados en los campos de peso y altura correspondan a números válidos o estén vacíos.
+     *
+     * @return true si ambos campos contienen valores numéricos convertibles o están en blanco; false de lo contrario.
+     */
     fun pesoAlturaValidos(): Boolean {
         val pesoOk = state.peso.isBlank() || state.peso.toDoubleOrNull() != null
         val alturaOk = state.altura.isBlank() || state.altura.toDoubleOrNull() != null
@@ -230,6 +248,12 @@ fun PerfilMedicoScreen(
     }
 }
 
+/**
+ * componente desplegable privado para la selección del tipo de sangre.
+ *
+ * @param tipoSeleccionado valor del tipo de sangre seleccionado actualmente.
+ * @param onTipoSeleccionado callback invocado al elegir una opción del menú.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TipoSangreDropdown(tipoSeleccionado: String, onTipoSeleccionado: (String) -> Unit) {
@@ -264,6 +288,17 @@ private fun TipoSangreDropdown(tipoSeleccionado: String, onTipoSeleccionado: (St
     }
 }
 
+/**
+ * componente de campo de texto personalizado y reutilizable para el formulario del perfil médico.
+ *
+ * @param value contenido textual actual del campo.
+ * @param onValueChange callback ejecutado cuando el texto cambia.
+ * @param placeholder texto explicativo o sugerencia cuando el campo está vacío.
+ * @param icon icono descriptivo renderizado al inicio del campo.
+ * @param keyboardType tipo de teclado virtual a mostrar al usuario.
+ * @param multiline define si el campo permite múltiples líneas de entrada de texto.
+ * @param modifier modificador para aplicar estilos o dimensiones adicionales al componente.
+ */
 @Composable
 private fun PerfilMedicoTextField(
     value: String,

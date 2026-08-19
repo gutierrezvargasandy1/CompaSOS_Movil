@@ -15,6 +15,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+/**
+ * estado de la interfaz de usuario para la pantalla de contactos de emergencia.
+ *
+ * @property cargando indica si se está realizando una carga asíncrona de datos.
+ * @property usuarioActual entidad [UsuarioEntity] asociada a la sesión activa.
+ * @property contactos lista de entidades [ContactoEmergenciaEntity] registradas por el usuario.
+ * @property mensaje mensaje de información o error para mostrar en la interfaz.
+ */
 data class ContactosUiState(
     val cargando: Boolean = true,
     val usuarioActual: UsuarioEntity? = null,
@@ -22,6 +30,15 @@ data class ContactosUiState(
     val mensaje: String? = null
 )
 
+/**
+ * viewmodel encargado de la gestión de contactos de emergencia del usuario.
+ * consulta y persiste la información en la base de datos local a través de [UsuarioDao] y [ContactoEmergenciaDao],
+ * gestionando el estado con [ContactosUiState].
+ *
+ * @property usuarioDao acceso a los datos del usuario local.
+ * @property contactoEmergenciaDao acceso a la tabla de contactos de emergencia.
+ * @property sessionManager gestor para obtener el identificador del usuario con sesión activa.
+ */
 class ContactosViewModel(
     private val usuarioDao: UsuarioDao,
     private val contactoEmergenciaDao: ContactoEmergenciaDao,
@@ -29,12 +46,18 @@ class ContactosViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ContactosUiState())
+
+    /** flujo de estado observable que expone el [ContactosUiState] actualizado para la interfaz de usuario. */
     val uiState: StateFlow<ContactosUiState> = _uiState.asStateFlow()
 
     init {
         cargarContactos()
     }
 
+    /**
+     * obtiene de forma asíncrona los datos del usuario activo y su lista de contactos de emergencia
+     * ordenados por prioridad desde la base de datos local y actualiza el [uiState].
+     */
     fun cargarContactos() {
         viewModelScope.launch {
             _uiState.update { it.copy(cargando = true) }
@@ -55,6 +78,16 @@ class ContactosViewModel(
         }
     }
 
+    /**
+     * crea e inserta un nuevo contacto de emergencia en la base de datos asignando un uuid único
+     * y recarga la lista de contactos al finalizar.
+     *
+     * @param nombre nombre completo del contacto.
+     * @param telefono número telefónico del contacto.
+     * @param correo correo electrónico opcional del contacto.
+     * @param parentesco relación o parentesco con el usuario (opcional).
+     * @param prioridad nivel de prioridad asignado al contacto (opcional).
+     */
     fun agregarContacto(
         nombre: String,
         telefono: String,
@@ -81,11 +114,25 @@ class ContactosViewModel(
     }
 }
 
+/**
+ * fábrica de viewmodel para instanciar [ContactosViewModel] pasando sus dependencias requeridas.
+ *
+ * @property usuarioDao dao para consultas de usuario.
+ * @property contactoEmergenciaDao dao para operaciones de contactos de emergencia.
+ * @property sessionManager gestor de la sesión actual del usuario.
+ */
 class ContactosViewModelFactory(
     private val usuarioDao: UsuarioDao,
     private val contactoEmergenciaDao: ContactoEmergenciaDao,
     private val sessionManager: SessionManager
 ) : ViewModelProvider.Factory {
+
+    /**
+     * crea una nueva instancia del [ContactosViewModel] con las dependencias suministradas.
+     *
+     * @param modelClass clase del viewmodel solicitado.
+     * @return una instancia de [ContactosViewModel].
+     */
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
         return ContactosViewModel(

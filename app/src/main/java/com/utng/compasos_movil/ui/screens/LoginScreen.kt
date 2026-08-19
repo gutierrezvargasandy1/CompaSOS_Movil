@@ -36,8 +36,11 @@ import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 import com.utng.compasos_movil.ui.theme.compaSOSTextFieldColors
 
 /**
- * LoginScreen integrado con AuthViewModel
- * Maneja login, validaciones, estados de carga y errores
+ * pantalla principal de inicio de sesión integrada con [AuthViewModel].
+ * gestiona la autenticación de usuarios, validación de campos, estados de carga y despliegue de mensajes de error o éxito.
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param authViewModel viewModel encargado de la lógica de negocio de autenticación.
  */
 @Composable
 fun LoginScreen(
@@ -196,6 +199,9 @@ fun LoginScreen(
     }
 }
 
+/**
+ * componente composable privado que muestra el logotipo estilizado de compasos.
+ */
 @Composable
 private fun LogoCompaSOS() {
     Row(verticalAlignment = Alignment.Bottom) {
@@ -215,7 +221,19 @@ private fun LogoCompaSOS() {
 }
 
 /**
- * Campo de texto reutilizable para login y registro
+ * campo de texto reutilizable estructurado para formularios de inicio de sesión y registro.
+ *
+ * @param value valor de texto actual dentro del campo.
+ * @param onValueChange callback invocado al modificarse el valor del texto.
+ * @param placeholder texto descriptivo de sugerencia cuando el campo está vacío.
+ * @param icon icono vectorial representativo mostrado al inicio del campo.
+ * @param keyboardType tipo de teclado virtual a solicitar al sistema.
+ * @param isPassword bandera que determina si el campo debe ocultar los caracteres ingresados.
+ * @param passwordVisible estado que controla si la contraseña se muestra en texto plano.
+ * @param onTogglePasswordVisibility callback opcional ejecutado al presionar el icono para alternar visibilidad.
+ * @param readOnly define si el contenido es únicamente de lectura.
+ * @param enabled indica si el campo permite interacción por parte del usuario.
+ * @param onClick callback opcional ejecutado al hacer clic sobre el campo.
  */
 @Composable
 private fun CompaSOSTextField(

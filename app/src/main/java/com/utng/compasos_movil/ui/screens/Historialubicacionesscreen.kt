@@ -37,6 +37,13 @@ import com.utng.compasos_movil.utils.SessionManager
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * pantalla principal para la visualización del historial de ubicaciones geográficas de un usuario mediante mapa interactivo y listado.
+ *
+ * @param historialDao acceso a datos del historial de ubicaciones en la base de datos local room.
+ * @param usuarioDao acceso a datos de los usuarios en la base de datos local room.
+ * @param sessionManager gestor de la sesión local activa.
+ */
 @Composable
 fun HistorialUbicacionesScreen(
     historialDao: HistorialUbicacionDao,
@@ -194,6 +201,11 @@ fun HistorialUbicacionesScreen(
 
 // ── Composables privados (sin cambios) ───────────────────────────────────────
 
+/**
+ * componente composable privado que despliega el encabezado con la información personal del usuario.
+ *
+ * @param usuario entidad [UsuarioEntity] con los datos del usuario.
+ */
 @Composable
 private fun UserHeader(usuario: UsuarioEntity) {
     Surface(
@@ -241,6 +253,13 @@ private fun UserHeader(usuario: UsuarioEntity) {
     }
 }
 
+/**
+ * componente composable privado que renderiza un elemento de la lista para una ubicación específica del historial.
+ *
+ * @param ubicacion datos de la entidad [HistorialUbicacionEntity] a mostrar.
+ * @param isSelected indica si el elemento se encuentra actualmente seleccionado.
+ * @param onClick callback ejecutado cuando el usuario presiona el elemento.
+ */
 @Composable
 private fun ListItemUbicacion(
     ubicacion: HistorialUbicacionEntity,
@@ -301,6 +320,11 @@ private fun ListItemUbicacion(
     }
 }
 
+/**
+ * componente composable privado que muestra una tarjeta flotante con la información detallada de la ubicación seleccionada.
+ *
+ * @param ubicacion entidad [HistorialUbicacionEntity] seleccionada.
+ */
 @Composable
 private fun SelectedLocationCard(ubicacion: HistorialUbicacionEntity) {
     Box(
@@ -345,6 +369,12 @@ private fun SelectedLocationCard(ubicacion: HistorialUbicacionEntity) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * da formato a la fecha completa en formato día/mes/año hora:minuto a partir de una cadena de fecha dada.
+ *
+ * @param dateString cadena original de fecha.
+ * @return texto formateado de la fecha.
+ */
 private fun formatDate(dateString: String): String {
     return try {
         val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -353,6 +383,12 @@ private fun formatDate(dateString: String): String {
     } catch (e: Exception) { dateString }
 }
 
+/**
+ * extrae únicamente la hora y minutos en formato HH:mm a partir de una cadena de fecha.
+ *
+ * @param dateString cadena original de fecha.
+ * @return texto de la hora formateada.
+ */
 private fun formatTimeOnly(dateString: String): String {
     return try {
         val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())

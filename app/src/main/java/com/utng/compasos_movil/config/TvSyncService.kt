@@ -74,6 +74,12 @@ class TvSyncService : Service() {
          */
         @Volatile private var instancia: TvSyncService? = null
 
+        /**
+         * inicia el servicio en primer plano para la sincronización continua con la tv.
+         *
+         * @param context contexto desde el cual se inicia el servicio.
+         * @param userId identificador opcional del usuario activo.
+         */
         fun iniciar(context: Context, userId: String? = null) {
             val intent = Intent(context, TvSyncService::class.java).apply {
                 userId?.let { putExtra(EXTRA_USER, it) }
@@ -84,6 +90,11 @@ class TvSyncService : Service() {
                 context.startService(intent)
         }
 
+        /**
+         * detiene la ejecución del servicio de sincronización.
+         *
+         * @param context contexto de la aplicación.
+         */
         fun detener(context: Context) {
             context.stopService(Intent(context, TvSyncService::class.java))
         }
@@ -174,6 +185,10 @@ class TvSyncService : Service() {
 
     // ── Ciclo de vida ─────────────────────────────────────────────────────────
 
+    /**
+     * inicializa la base de datos, el gestor de sesión, el repositorio de ubicación y la instancia estática.
+     * posteriormente, inicia el servicio en primer plano y la conexión mqtt.
+     */
     override fun onCreate() {
         super.onCreate()
         db           = AppDatabase.getInstance(applicationContext)
@@ -199,6 +214,9 @@ class TvSyncService : Service() {
         conectar()
     }
 
+    /**
+     * recibe y actualiza el identificador del usuario si cambia, forzando la sincronización inmediata con las tvs.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val nuevo = intent?.getStringExtra(EXTRA_USER) ?: session.obtenerUsuarioId()
         if (nuevo != null && nuevo != usuarioId) {
@@ -209,8 +227,14 @@ class TvSyncService : Service() {
         return START_STICKY
     }
 
+    /**
+     * servicio no enlazado, retorna null.
+     */
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * notifica a las tvs que el teléfono se desconecta, detiene los corutinas y libera la instancia.
+     */
     override fun onDestroy() {
         // Avísale a las TVs que este teléfono se va, en vez de dejarlas
         // mostrando datos viejos como si estuvieran vivos.
@@ -237,6 +261,9 @@ class TvSyncService : Service() {
 
     // ── Conexión ──────────────────────────────────────────────────────────────
 
+    /**
+     * establece la conexión asíncrona mediante [MqttManager] e inicia la presencia y el ciclo de latido.
+     */
     private fun conectar() {
         scope.launch {
             var intentos = 0
@@ -266,6 +293,10 @@ class TvSyncService : Service() {
         }
     }
 
+    /**
+     * ejecuta el bucle periódico para limpiar datos obsoletos, guardar el gps del propio teléfono
+     * y sincronizar el estado completo con las pantallas tv.
+     */
     private fun iniciarLatido() {
         jobLatido?.cancel()
         jobLatido = scope.launch {
@@ -304,6 +335,14 @@ class TvSyncService : Service() {
         Log.d(TAG, "↻ Snapshot enviado a ${tvs.size} TV(s)")
     }
 
+    /**
+     * emite la posición geográfica puntual de un usuario hacia todas las tvs vinculadas.
+     *
+     * @param idUsuario identificador del usuario reportado.
+     * @param lat latitud geográfica.
+     * @param lng longitud geográfica.
+     * @param fecha marca temporal del reporte.
+     */
     private suspend fun enviarUbicacion(
         idUsuario: String, lat: Double, lng: Double, fecha: String?
     ) {
@@ -344,6 +383,9 @@ class TvSyncService : Service() {
         enviarUbicacion(uid, loc.latitud, loc.longitud, ahora)
     }
 
+    /**
+     * notifica a las tvs vinculadas que el dispositivo móvil se encuentra activo en línea.
+     */
     private suspend fun anunciarPresencia() {
         val online = JSONObject().apply {
             put("online", true)
@@ -356,6 +398,11 @@ class TvSyncService : Service() {
         }
     }
 
+    /**
+     * ejecuta un bloque de código para cada dispositivo tv vinculado al usuario activo.
+     *
+     * @param bloque función a aplicar por cada [DispositivoEntity] de tipo tv.
+     */
     private suspend fun paraCadaTv(bloque: (DispositivoEntity) -> Unit) {
         val uid = usuarioId ?: session.obtenerUsuarioId() ?: return
         if (!mqtt.estaConectado) return
@@ -405,6 +452,15 @@ class TvSyncService : Service() {
         }
     }
 
+    /**
+     * construye la estructura json individual correspondiente a la información de un integrante o del dueño.
+     *
+     * @param id identificador único del familiar.
+     * @param nombre nombre del familiar.
+     * @param apellido apellido paterno opcional.
+     * @param rol rol o parentesco dentro del grupo familiar.
+     * @return objeto [JSONObject] formateado con los detalles del integrante.
+     */
     private suspend fun jsonFamiliar(
         id: String, nombre: String, apellido: String?, rol: String
     ): JSONObject {
@@ -421,12 +477,24 @@ class TvSyncService : Service() {
         }
     }
 
+    /**
+     * consulta la base de datos para obtener el nombre completo de un usuario por su identificador.
+     *
+     * @param id identificador del usuario.
+     * @return nombre concatenado o "Familiar" en su defecto.
+     */
     private suspend fun nombreDe(id: String): String {
         val u = db.usuarioDao().obtenerPorId(id) ?: return "Familiar"
         return listOfNotNull(u.nombre, u.apellidoPaterno).joinToString(" ").trim()
             .ifBlank { "Familiar" }
     }
 
+    /**
+     * evalúa si la fecha dada se encuentra dentro del rango de actividad [VENTANA_EN_LINEA_MS].
+     *
+     * @param fecha fecha a evaluar en formato texto.
+     * @return true si se considera en línea, false en caso contrario.
+     */
     private fun esReciente(fecha: String?): Boolean {
         if (fecha.isNullOrBlank()) return false
         return try {
@@ -437,6 +505,11 @@ class TvSyncService : Service() {
 
     // ── Notificación persistente ──────────────────────────────────────────────
 
+    /**
+     * construye la notificación persistente para mantener el servicio activo en primer plano.
+     *
+     * @return objeto [Notification] configurado.
+     */
     private fun notif() = NotificationCompat.Builder(this, CANAL)
         .setSmallIcon(android.R.drawable.ic_menu_compass)
         .setContentTitle("CompaSOS — TV")
@@ -445,6 +518,9 @@ class TvSyncService : Service() {
         .setOngoing(true)
         .build()
 
+    /**
+     * crea el canal de notificación persistente requerido para android 8.0 (api 26) y superior.
+     */
     private fun crearCanal() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)

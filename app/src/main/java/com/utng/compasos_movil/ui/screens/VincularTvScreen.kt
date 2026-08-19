@@ -34,6 +34,16 @@ import com.utng.compasos_movil.ui.theme.CompaSOSButtonShapeRadius
 import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.utils.SessionManager
 
+/**
+ * pantalla para gestionar el proceso de vinculación de una pantalla inteligente compasos tv.
+ * genera un código de vinculación único de 6 dígitos y monitorea los estados del proceso (generando, exitoso, error).
+ *
+ * @param navController controlador para gestionar la navegación entre pantallas.
+ * @param usuarioDao acceso a datos de usuarios en la base de datos local room.
+ * @param dispositivoDao acceso a datos de dispositivos en la base de datos local room.
+ * @param familiaUsuarioDao acceso a datos de relaciones familiares en la base de datos local room.
+ * @param historialUbicacionDao acceso a datos del historial de ubicaciones en la base de datos local room.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VincularTvScreen(

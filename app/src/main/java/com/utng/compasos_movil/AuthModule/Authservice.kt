@@ -6,18 +6,24 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Servicio de Autenticación
- * Maneja login, registro, eliminación de usuario y perfil
+ * servicio de autenticación de la aplicación.
+ * maneja el inicio de sesión, el registro de nuevos usuarios, la consulta y actualización de perfiles,
+ * la eliminación/desactivación de cuentas y la validación de datos de credenciales.
+ *
+ * @property usuarioRepository repositorio encargado de la gestión de persistencia de datos de usuario.
  */
 class AuthService(
     private val usuarioRepository: UsuarioRepository
 ) {
 
     /**
-     * Login de usuario
-     * @param correo Email del usuario
-     * @param password Contraseña del usuario
-     * @return Resultado del login (UsuarioEntity si es exitoso, null si falla)
+     * realiza la autenticación de un usuario mediante su correo electrónico y contraseña.
+     * valida que los campos no estén vacíos, busca el usuario en el repositorio y verifica
+     * que la contraseña coincida y la cuenta se encuentre activa.
+     *
+     * @param correo email del usuario a autenticar.
+     * @param password contraseña ingresada por el usuario.
+     * @return la entidad [UsuarioEntity] si el login es exitoso, o null si falla la validación o credenciales.
      */
     suspend fun login(correo: String, password: String): UsuarioEntity? {
         // Validar que correo y password no estén vacíos
@@ -38,16 +44,18 @@ class AuthService(
     }
 
     /**
-     * Registra un nuevo usuario
-     * @param nombre Nombre del usuario
-     * @param apellidoPaterno Apellido paterno
-     * @param apellidoMaterno Apellido materno
-     * @param correo Email del usuario
-     * @param password Contraseña
-     * @param telefono Teléfono (opcional)
-     * @param fechaNacimiento Fecha de nacimiento (opcional)
-     * @param sexo Sexo (opcional)
-     * @return Resultado del registro (UsuarioEntity si es exitoso, null si falla)
+     * registra un nuevo usuario en la base de datos tras validar los campos obligatorios,
+     * el formato del correo, la longitud de la contraseña y la inexistencia previa del correo.
+     *
+     * @param nombre nombre del usuario (obligatorio).
+     * @param apellidoPaterno apellido paterno del usuario (opcional).
+     * @param apellidoMaterno apellido materno del usuario (opcional).
+     * @param correo dirección de correo electrónico única.
+     * @param password contraseña (mínimo 6 caracteres).
+     * @param telefono número telefónico (opcional).
+     * @param fechaNacimiento fecha de nacimiento en formato texto (opcional).
+     * @param sexo género o sexo del usuario (opcional).
+     * @return la entidad [UsuarioEntity] creada e insertada, o null si alguna validación falla.
      */
     suspend fun registrar(
         nombre: String,
@@ -102,9 +110,10 @@ class AuthService(
     }
 
     /**
-     * Obtiene el perfil del usuario actual
-     * @param usuarioId ID del usuario
-     * @return UsuarioEntity con los datos del perfil
+     * obtiene la información de perfil de un usuario a partir de su identificador único.
+     *
+     * @param usuarioId id único del usuario a consultar.
+     * @return la entidad [UsuarioEntity] con los datos del perfil, o null si el id está en blanco o no existe.
      */
     suspend fun obtenerPerfil(usuarioId: String): UsuarioEntity? {
         if (usuarioId.isBlank()) {
@@ -115,9 +124,10 @@ class AuthService(
     }
 
     /**
-     * Elimina/desactiva un usuario
-     * @param usuarioId ID del usuario a eliminar
-     * @return true si fue exitoso, false si no
+     * elimina o desactiva la cuenta de un usuario en la base de datos a partir de su id.
+     *
+     * @param usuarioId id del usuario a eliminar.
+     * @return true si la eliminación se realizó con éxito, false si el id es inválido o ocurre un error.
      */
     suspend fun eliminarUsuario(usuarioId: String): Boolean {
         return try {
@@ -133,9 +143,10 @@ class AuthService(
     }
 
     /**
-     * Actualiza el perfil del usuario
-     * (Nota: El DAO actual solo soporta Insert, no Update)
-     * Puedes agregar esta funcionalidad al DAO si lo necesitas
+     * actualiza la información del perfil de un usuario previamente registrado.
+     *
+     * @param usuario entidad [UsuarioEntity] con los datos modificados.
+     * @return true si el usuario existía y se procesó la actualización, false en caso contrario.
      */
     suspend fun actualizarPerfil(usuario: UsuarioEntity): Boolean {
         return try {
@@ -154,7 +165,10 @@ class AuthService(
     }
 
     /**
-     * Verifica si un correo es válido (formato básico)
+     * verifica si una cadena cumple con la estructura básica de una dirección de correo electrónico válida.
+     *
+     * @param correo texto del correo a evaluar.
+     * @return true si coincide con la expresión regular del formato correo, false de lo contrario.
      */
     private fun esCorreoValido(correo: String): Boolean {
         val emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$"
@@ -162,14 +176,18 @@ class AuthService(
     }
 
     /**
-     * Genera un ID único para el usuario
+     * genera un identificador único alfanumérico para registrar a un nuevo usuario.
+     *
+     * @return cadena con formato "user_{timestamp}_{random}".
      */
     private fun generarId(): String {
         return "user_${System.currentTimeMillis()}_${(0..9999).random()}"
     }
 
     /**
-     * Obtiene la fecha y hora actual en formato ISO 8601
+     * obtiene la fecha y hora actual del sistema formateada en el estándar "yyyy-MM-dd HH:mm:ss".
+     *
+     * @return cadena de texto con la fecha y hora formateada.
      */
     private fun obtenerFechaActual(): String {
         val formato = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())

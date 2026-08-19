@@ -18,8 +18,17 @@ import com.utng.compasos_movil.navigation.AppNavigation
 import com.utng.compasos_movil.ui.theme.CompaSOS_MovilTheme
 import com.utng.compasos_movil.utils.SessionManager
 
+/**
+ * actividad principal de la aplicación compasos.
+ * administra la inicialización de la base de datos local room, la gestión de permisos en tiempo de ejecución,
+ * el arranque de los servicios mqtt en segundo plano y la renderización de la navegación ui.
+ */
 class MainActivity : ComponentActivity() {
 
+    /**
+     * lanzador para la solicitud múltiple de permisos en tiempo de ejecución.
+     * evalúa el resultado y procede a iniciar los servicios de la aplicación si se otorgan los permisos.
+     */
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -37,6 +46,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * inicializa la actividad, la base de datos, verifica permisos e inicia el contenedor composable principal.
+     *
+     * @param savedInstanceState estado guardado de la instancia de la actividad si existe.
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -76,15 +90,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * atiende las actualizaciones de intent cuando la actividad se relanza.
+     *
+     * @param intent nuevo intent asignado a la actividad.
+     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
     }
 
     /**
-     * AlertaMqttService = reloj + familiares (NO se toca).
-     * TvSyncService     = pantalla TV (nuevo, corre en paralelo con su propio
-     *                     clientId, no interfiere con el otro).
+     * inicia los servicios en segundo plano mqtt (alertaMqttService y tvSyncService)
+     * utilizando el identificador del usuario en sesión activa.
      */
     private fun iniciarServicios() {
         val userId = SessionManager(applicationContext).obtenerUsuarioId()
@@ -92,6 +110,11 @@ class MainActivity : ComponentActivity() {
         TvSyncService.iniciar(applicationContext, userId)
     }
 
+    /**
+     * evalúa si los permisos requeridos de ubicación e inicio de servicio en primer plano están concedidos.
+     *
+     * @return true si todos los permisos indispensables están activos, false en caso contrario.
+     */
     private fun hasRequiredPermissions(): Boolean {
         val locationGranted = ContextCompat.checkSelfPermission(
             this, Manifest.permission.ACCESS_FINE_LOCATION
@@ -106,6 +129,9 @@ class MainActivity : ComponentActivity() {
         return locationGranted && fgsLocationGranted
     }
 
+    /**
+     * solicita al usuario la concesión de permisos de ubicación, servicio en primer plano y notificaciones.
+     */
     private fun requestPermissions() {
         val permissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,

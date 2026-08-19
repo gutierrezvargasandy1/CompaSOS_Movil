@@ -33,7 +33,11 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Factory para ProfileViewModel
+ * fábrica para la creación de instancias de [ProfileViewModel] proporcionando sus dependencias requeridas.
+ *
+ * @property usuarioRepository repositorio para la gestión de datos de usuarios.
+ * @property perfilMedicoRepository repositorio para la gestión de datos de perfiles médicos.
+ * @property sessionManager gestor de la sesión local activa del usuario.
  */
 class ProfileViewModelFactory(
     private val usuarioRepository: UsuarioRepository,
@@ -41,6 +45,13 @@ class ProfileViewModelFactory(
     private val sessionManager: SessionManager
 ) : androidx.lifecycle.ViewModelProvider.Factory {
 
+    /**
+     * crea una nueva instancia del [ViewModel] solicitado si coincide con [ProfileViewModel].
+     *
+     * @param modelClass clase del [ViewModel] a instanciar.
+     * @return una instancia de [T] configurada con los repositorios y gestor de sesión.
+     * @throws IllegalArgumentException si la clase solicitada no es asignable a [ProfileViewModel].
+     */
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ProfileViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
@@ -55,7 +66,12 @@ class ProfileViewModelFactory(
 }
 
 /**
- * ProfileScreen - Carga datos reales del usuario desde la BD
+ * pantalla de perfil de usuario que carga y despliega la información personal y médica registrada en la base de datos.
+ *
+ * @param navController controlador opcional para gestionar la navegación entre pantallas.
+ * @param usuarioRepository repositorio opcional de acceso a datos de usuarios.
+ * @param perfilMedicoRepository repositorio opcional de acceso a datos del perfil médico.
+ * @param sessionManager gestor opcional de la sesión de usuario activa.
  */
 @Composable
 fun ProfileScreen(
@@ -204,6 +220,11 @@ fun ProfileScreen(
     }
 }
 
+/**
+ * componente composable privado que renderiza el encabezado con avatar, nombre completo, correo y estado de la cuenta del usuario.
+ *
+ * @param usuario datos de la entidad [UsuarioEntity] a presentar.
+ */
 @Composable
 private fun HeaderPerfil(usuario: UsuarioEntity) {
     Surface(
@@ -273,6 +294,11 @@ private fun HeaderPerfil(usuario: UsuarioEntity) {
     }
 }
 
+/**
+ * componente composable privado que organiza y muestra la sección de información personal del usuario.
+ *
+ * @param usuario entidad [UsuarioEntity] que contiene los datos personales a desplegar.
+ */
 @Composable
 private fun SectionBasicInfo(usuario: UsuarioEntity) {
     Column(
@@ -312,6 +338,11 @@ private fun SectionBasicInfo(usuario: UsuarioEntity) {
     }
 }
 
+/**
+ * componente composable privado que organiza y muestra la sección con los datos médicos del usuario.
+ *
+ * @param perfil entidad [PerfilMedicoEntity] con la información médica asociada al usuario.
+ */
 @Composable
 private fun SectionMedicalInfo(perfil: PerfilMedicoEntity) {
     Column(
@@ -359,6 +390,13 @@ private fun SectionMedicalInfo(perfil: PerfilMedicoEntity) {
     }
 }
 
+/**
+ * componente composable privado que muestra una tarjeta informativa individual con título y valor.
+ *
+ * @param label etiqueta descriptiva del campo de información.
+ * @param value valor o contenido del campo.
+ * @param highlight determina si la tarjeta utiliza un tono acentuado para resaltar.
+ */
 @Composable
 private fun InfoCard(
     label: String,
@@ -398,6 +436,11 @@ private fun InfoCard(
     }
 }
 
+/**
+ * componente composable privado que muestra la barra inferior con botones para regresar o editar el perfil.
+ *
+ * @param navController controlador opcional para realizar acciones de navegación.
+ */
 @Composable
 private fun FooterButtons(navController: NavController? = null) {
     Surface(
@@ -461,6 +504,12 @@ private fun FooterButtons(navController: NavController? = null) {
     }
 }
 
+/**
+ * convierte una cadena de fecha dada en formato 'yyyy-MM-dd HH:mm:ss' al formato dd/MM/yyyy.
+ *
+ * @param dateString texto original de la fecha.
+ * @return cadena con el formato de fecha simplificado dd/MM/yyyy.
+ */
 private fun formatDate(dateString: String): String {
     return try {
         val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())

@@ -6,6 +6,9 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * gestor principal del cliente mqtt encargado de administrar la conexión, publicación,
+ * suscripción y re-suscripción automática de mensajes con el broker.
+ *
  * Mantiene la misma API pública que tenías (conectar/publicar/suscribir/
  * desuscribir/desconectar/estaConectado), así que DispositivosViewModel,
  * TvVinculacionViewModel y AlertaPhoneRepository siguen compilando igual.
@@ -27,12 +30,27 @@ class MqttManager {
     private val suscripciones = ConcurrentHashMap<String, (String, String) -> Unit>()
     private var onConexion: ((reconectado: Boolean) -> Unit)? = null
 
+    /**
+     * indica si el cliente mqtt se encuentra actualmente conectado al broker.
+     */
     val estaConectado: Boolean
         get() = client?.isConnected == true
 
+    /**
+     * asigna una función de callback que se ejecutará al concretarse una conexión o reconexión exitosa.
+     *
+     * @param bloque lambda que recibe `true` si se trata de una reconexión automática o `false` si es la primera conexión.
+     */
     fun alConectar(bloque: (reconectado: Boolean) -> Unit) { onConexion = bloque }
 
-    /** Llamar siempre desde Dispatchers.IO */
+    /**
+     * establece la conexión con el broker mqtt utilizando los parámetros especificados y configura los callbacks de eventos.
+     * Llamar siempre desde Dispatchers.IO.
+     *
+     * @param clientId identificador único del cliente para el broker.
+     * @param lwtTopic tópico opcional para el mensaje de última voluntad (last will and testament).
+     * @param lwtPayload contenido del mensaje opcional de última voluntad.
+     */
     @JvmOverloads
     fun conectar(
         clientId: String = "compasos_movil_${System.currentTimeMillis()}",
@@ -76,6 +94,10 @@ class MqttManager {
         }
     }
 
+    /**
+     * re-suscribe de forma automática todos los tópicos almacenados en el mapa de [suscripciones]
+     * tras una reconexión con el broker mqtt.
+     */
     private fun reaplicarSuscripciones() {
         val c = client ?: return
         suscripciones.forEach { (topic, cb) ->
@@ -90,6 +112,9 @@ class MqttManager {
         }
     }
 
+    /**
+     * desconecta de forma limpia el cliente del broker mqtt y vacía el mapa de suscripciones activas.
+     */
     fun desconectar() {
         try {
             client?.takeIf { it.isConnected }?.disconnect()
@@ -103,10 +128,16 @@ class MqttManager {
     }
 
     /**
+     * publica un mensaje en un tópico específico del broker.
+     *
+     * @param topic canal o tópico donde se enviará el mensaje.
+     * @param payload contenido en formato texto del mensaje.
+     * @param qos nivel de calidad de servicio (por defecto el definido en [MqttConfig.QOS]).
      * @param retained true = el broker guarda el mensaje y se lo entrega a quien
      *        se suscriba después. Úsalo para ESTADO (sesión, última ubicación),
      *        nunca para EVENTOS (alertas), o la TV re-mostraría la misma alerta
      *        cada vez que reinicia.
+     * @throws IllegalStateException si el cliente no se encuentra conectado.
      */
     @JvmOverloads
     fun publicar(
@@ -123,6 +154,15 @@ class MqttManager {
         Log.d(TAG, "► [$topic]${if (retained) "(retained)" else ""}: $payload")
     }
 
+    /**
+     * intenta publicar un mensaje de forma segura capturando cualquier excepción para evitar fallos en la aplicación.
+     *
+     * @param topic canal o tópico de destino.
+     * @param payload contenido en texto del mensaje.
+     * @param qos nivel de calidad de servicio.
+     * @param retained indica si el mensaje debe ser retenido por el broker.
+     * @return true si la publicación fue exitosa, false si ocurrió una excepción.
+     */
     @JvmOverloads
     fun publicarSeguro(
         topic: String, payload: String,
@@ -133,6 +173,13 @@ class MqttManager {
         Log.e(TAG, "No se pudo publicar en $topic: ${e.message}"); false
     }
 
+    /**
+     * se suscribe a un tópico específico en el broker y registra la función callback para procesar los mensajes entrantes.
+     *
+     * @param topic canal o tópico al que se desea suscribir.
+     * @param onMensaje lambda que se ejecutará al recibir un mensaje con el tópico y el payload recibidos.
+     * @throws IllegalStateException si el cliente no se encuentra conectado.
+     */
     fun suscribir(topic: String, onMensaje: (topic: String, payload: String) -> Unit) {
         val c = client ?: throw IllegalStateException("MQTT no conectado")
         suscripciones[topic] = onMensaje
@@ -144,6 +191,11 @@ class MqttManager {
         Log.d(TAG, "Suscrito a: $topic")
     }
 
+    /**
+     * cancela la suscripción a un tópico en el broker y remueve el callback correspondiente.
+     *
+     * @param topic canal o tópico del cual se desea cancelar la suscripción.
+     */
     fun desuscribir(topic: String) {
         try {
             suscripciones.remove(topic)

@@ -24,10 +24,34 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * representa los distintos estados posibles durante el proceso de vinculación con una android tv.
+ */
 sealed class EstadoVinculacionTv {
+    /**
+     * estado inicial inactivo antes de iniciar el proceso de vinculación.
+     */
     object Inactivo : EstadoVinculacionTv()
+
+    /**
+     * estado activo en el que se ha generado un código de vinculación y se espera la respuesta de la tv.
+     *
+     * @property codigo código alfanumérico generado para que el usuario ingrese en la tv.
+     */
     data class Generando(val codigo: String) : EstadoVinculacionTv()
+
+    /**
+     * estado final de vinculación exitosa.
+     *
+     * @property modeloTv nombre o modelo del dispositivo tv vinculado.
+     */
     data class Exitosa(val modeloTv: String) : EstadoVinculacionTv()
+
+    /**
+     * estado de fallo durante el flujo de vinculación.
+     *
+     * @property mensaje mensaje explicativo del error ocurrido.
+     */
     data class Error(val mensaje: String) : EstadoVinculacionTv()
 }
 
@@ -46,6 +70,15 @@ sealed class EstadoVinculacionTv {
  *    solicitud primero. Antes, al salir de la pantalla, matabas la conexión
  *    y con ella cualquier suscripción viva.
  */
+/**
+ * viewmodel encargado de la generación de códigos de vinculación y sincronización de datos con dispositivos android tv vía mqtt.
+ *
+ * @property usuarioDao acceso a los datos de usuarios en la base de datos local.
+ * @property dispositivoDao acceso a los datos de dispositivos vinculados.
+ * @property familiaUsuarioDao acceso a la relación entre familiares y usuarios.
+ * @property historialDao acceso al historial de ubicaciones para consultar la última posición conocida.
+ * @property sessionManager gestor de la sesión activa del usuario.
+ */
 class TvVinculacionViewModel(
     private val usuarioDao:        UsuarioDao,
     private val dispositivoDao:    DispositivoDao,
@@ -54,16 +87,42 @@ class TvVinculacionViewModel(
     private val sessionManager:    SessionManager
 ) : ViewModel() {
 
-    companion object { private const val TAG = "TvVinculacionVM" }
+    companion object {
+        /**
+         * etiqueta utilizada para los registros de log en cat.
+         */
+        private const val TAG = "TvVinculacionVM"
+    }
 
+    /**
+     * gestor de conexión y mensajería mqtt.
+     */
     private val mqtt = MqttManager()
+
+    /**
+     * formateador de fechas para los registros transmitidos a la tv.
+     */
     private val fmt  = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
+    /**
+     * flujo interno mutable que contiene el estado actual del proceso de vinculación.
+     */
     private val _estado = MutableStateFlow<EstadoVinculacionTv>(EstadoVinculacionTv.Inactivo)
+
+    /**
+     * flujo observable público del estado de vinculación.
+     */
     val estado: StateFlow<EstadoVinculacionTv> = _estado.asStateFlow()
 
+    /**
+     * código alfanumérico temporal generado para la sesión de vinculación activa.
+     */
     private var codigoActivo: String? = null
 
+    /**
+     * genera un nuevo código alfanumérico, establece la conexión con el broker mqtt y se suscribe
+     * al tópico de solicitudes de vinculación para esperar la respuesta de la tv.
+     */
     fun iniciarVinculacion() {
         val codigo = generarCodigo()
         codigoActivo = codigo
@@ -88,6 +147,13 @@ class TvVinculacionViewModel(
         }
     }
 
+    /**
+     * procesa la solicitud recibida desde la tv, responde con la información del usuario,
+     * registra el dispositivo en la base de datos local y transmite la lista de familiares con sus ubicaciones.
+     *
+     * @param payload contenido json de la solicitud enviada por la tv.
+     * @param codigoEsperado código de vinculación con el que se debe validar la recepción.
+     */
     private suspend fun procesarSolicitudTv(payload: String, codigoEsperado: String) {
         if (codigoActivo != codigoEsperado) return
         try {
@@ -168,6 +234,15 @@ class TvVinculacionViewModel(
         }
     }
 
+    /**
+     * construye un objeto json con la información personal, rol y última ubicación registrada de un familiar.
+     *
+     * @param id identificador del usuario o familiar.
+     * @param nombre nombre del familiar.
+     * @param apellido apellido paterno del familiar.
+     * @param rol rol o parentesco que desempeña en el grupo familiar.
+     * @return [JSONObject] estructurado con los datos del familiar.
+     */
     private suspend fun jsonFamiliar(
         id: String, nombre: String, apellido: String?, rol: String
     ): JSONObject {
@@ -184,6 +259,9 @@ class TvVinculacionViewModel(
         }
     }
 
+    /**
+     * cancela la suscripción mqtt activa, limpia el código generado y reinicia el estado a inactivo.
+     */
     fun reiniciar() {
         codigoActivo?.let { cod ->
             viewModelScope.launch(Dispatchers.IO) {
@@ -196,17 +274,34 @@ class TvVinculacionViewModel(
         _estado.value = EstadoVinculacionTv.Inactivo
     }
 
+    /**
+     * libera los recursos y desconecta el cliente mqtt al destruir la instancia del viewmodel.
+     */
     override fun onCleared() {
         super.onCleared()
         viewModelScope.launch(Dispatchers.IO) { mqtt.desconectar() }
     }
 
+    /**
+     * genera una cadena alfanumérica aleatoria de 6 caracteres para ser utilizada como código de vinculación.
+     *
+     * @return código alfanumérico generado.
+     */
     private fun generarCodigo(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return (1..6).map { chars.random() }.joinToString("")
     }
 }
 
+/**
+ * fábrica de proveedores para instanciar [TvVinculacionViewModel] inyectando sus dependencias necesarias.
+ *
+ * @property usuarioDao acceso a los datos de usuarios.
+ * @property dispositivoDao acceso a la entidad de dispositivos.
+ * @property familiaUsuarioDao acceso a la relación de familiares.
+ * @property historialDao acceso al historial de ubicaciones.
+ * @property sessionManager gestor de sesión del usuario.
+ */
 class TvVinculacionViewModelFactory(
     private val usuarioDao:        UsuarioDao,
     private val dispositivoDao:    DispositivoDao,
@@ -214,6 +309,12 @@ class TvVinculacionViewModelFactory(
     private val historialDao:      HistorialUbicacionDao,   // ← NUEVO
     private val sessionManager:    SessionManager
 ) : ViewModelProvider.Factory {
+    /**
+     * crea una nueva instancia de la clase viewmodel requerida.
+     *
+     * @param modelClass la clase del viewmodel a instanciar.
+     * @return una nueva instancia de [TvVinculacionViewModel].
+     */
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         TvVinculacionViewModel(

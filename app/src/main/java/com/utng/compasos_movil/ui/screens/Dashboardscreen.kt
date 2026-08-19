@@ -68,25 +68,52 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * color principal de estado de emergencia.
+ */
 private val EmergenciaColor      = Color(0xFFE53935)
+
+/**
+ * color secundario/claro para gradientes de emergencia.
+ */
 private val EmergenciaColorClaro = Color(0xFFFF6F61)
+
+/**
+ * color representativo de operaciones o estados exitosos.
+ */
 private val ExitoColor           = Color(0xFF4CAF50)
 
+/**
+ * tiempo necesario de pulsación continua en milisegundos para activar el botón de pánico.
+ */
 private const val DURACION_HOLD_MS = 2000
+
+/**
+ * número de intervalos para calcular la animación de sostenimiento del botón de pánico.
+ */
 private const val PASOS_HOLD       = 40
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
-
+/**
+ * viewmodel encargado de coordinar la lógica del dashboard principal, el envío de alertas sos y la verificación del estado de dispositivos.
+ *
+ * @param application instancia de la aplicación android.
+ * @property sessionManager gestor de sesión para obtener la información del usuario autenticado.
+ */
 class DashboardViewModel(
     application: Application,
     private val sessionManager: SessionManager
 ) : AndroidViewModel(application) {
 
+    /**
+     * instancia de la base de datos local room.
+     */
     private val db = AppDatabase.getInstance(application)
 
-    // ✅ El repositorio ya tiene todo: Room, ubicación, notificación a familiares
+    /**
+     * repositorio unificado para la gestión de alertas, ubicación y notificaciones en el dispositivo móvil.
+     */
     private val repository = AlertaPhoneRepository(
         alertaDao = db.alertaDao(),
         ubicacionDao = db.ubicacionDao(),
@@ -98,14 +125,31 @@ class DashboardViewModel(
         context = application
     )
 
+    /**
+     * flujo interno mutable que indica si hay un reloj inteligente vinculado.
+     */
     private val _relojConectado  = MutableStateFlow(false)
+
+    /**
+     * flujo observable público con el estado de vinculación del reloj inteligente.
+     */
     val relojConectado: StateFlow<Boolean> = _relojConectado.asStateFlow()
 
+    /**
+     * flujo interno mutable que guarda el identificador de la alerta generada recientemente.
+     */
     private val _alertaEnviadaId = MutableStateFlow<String?>(null)
+
+    /**
+     * flujo observable público con el identificador de la alerta enviada.
+     */
     val alertaEnviadaId: StateFlow<String?> = _alertaEnviadaId.asStateFlow()
 
     init { verificarReloj() }
 
+    /**
+     * verifica de forma asíncrona en la base de datos si el usuario posee registrado un dispositivo wear os.
+     */
     private fun verificarReloj() {
         viewModelScope.launch(Dispatchers.IO) {
             val userId  = sessionManager.obtenerUsuarioId() ?: return@launch
@@ -115,6 +159,9 @@ class DashboardViewModel(
         }
     }
 
+    /**
+     * dispara una alerta de emergencia sos, registrándola en room, capturando la ubicación actual e iniciando el rastreo en vivo.
+     */
     fun dispararSOS() {
         viewModelScope.launch {
             // Crea la alerta en Room, obtiene ubicación del teléfono
@@ -126,12 +173,27 @@ class DashboardViewModel(
         }
     }
 
+    /**
+     * limpia el identificador de alerta enviada una vez que la interfaz ha consumido la notificación.
+     */
     fun consumirAlertaEnviada() { _alertaEnviadaId.value = null }
 
+    /**
+     * fábrica de viewmodel para instanciar [DashboardViewModel] pasando las dependencias requeridas.
+     *
+     * @property app instancia de la aplicación android.
+     * @property sessionManager gestor de la sesión actual.
+     */
     class Factory(
         private val app:            Application,
         private val sessionManager: SessionManager
     ) : ViewModelProvider.Factory {
+        /**
+         * crea una nueva instancia de [DashboardViewModel].
+         *
+         * @param modelClass tipo de la clase viewmodel requerida.
+         * @return instancia construida de [DashboardViewModel].
+         */
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             DashboardViewModel(app, sessionManager) as T
@@ -140,6 +202,16 @@ class DashboardViewModel(
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
+/**
+ * pantalla principal del dashboard que despliega el mapa interactivo, estado de dispositivos, botón de pánico sos y navegación lateral.
+ *
+ * @param navController controlador para la navegación entre pantallas.
+ * @param usuario información del usuario autenticado para mostrar en el encabezado y menú.
+ * @param latitud latitud actual para la visualización en el mapa.
+ * @param longitud longitud actual para la visualización en el mapa.
+ * @param sessionManager gestor de sesión local.
+ * @param onCerrarSesion callback ejecutado cuando el usuario solicita cerrar su sesión.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -338,6 +410,13 @@ fun DashboardScreen(
 
 // ── SOSConfirmacionDialog ─────────────────────────────────────────────────────
 
+/**
+ * componente composable privado que muestra un cuadro de diálogo con temporizador regresivo previo al envío automático de la alerta sos.
+ *
+ * @param tiempoRestante segundos faltantes antes de disparar la alerta.
+ * @param onEnviarAhora callback para forzar el envío inmediato de la alerta.
+ * @param onCancelar callback para cancelar el envío de emergencia.
+ */
 @Composable
 private fun SOSConfirmacionDialog(
     tiempoRestante: Int,
@@ -436,6 +515,11 @@ private fun SOSConfirmacionDialog(
 
 // ── EstadoDispositivos ────────────────────────────────────────────────────────
 
+/**
+ * componente composable privado que muestra el estado de vinculación con el reloj inteligente del usuario.
+ *
+ * @param relojConectado indica si existe un reloj vinculado.
+ */
 @Composable
 private fun EstadoDispositivos(relojConectado: Boolean) {
     EstadoPill(
@@ -445,6 +529,13 @@ private fun EstadoDispositivos(relojConectado: Boolean) {
     )
 }
 
+/**
+ * componente composable privado que renderiza una pastilla/badge con icono y texto explicativo.
+ *
+ * @param icono vector del icono a presentar.
+ * @param texto cadena descriptiva.
+ * @param color color representativo del estado.
+ */
 @Composable
 private fun EstadoPill(icono: ImageVector, texto: String, color: Color) {
     Row(
@@ -461,6 +552,14 @@ private fun EstadoPill(icono: ImageVector, texto: String, color: Color) {
 
 // ── MapaUbicacion ─────────────────────────────────────────────────────────────
 
+/**
+ * componente composable privado para desplegar el mapa interactivo de mapbox centrado en las coordenadas del usuario.
+ *
+ * @param latitud latitud actual del usuario.
+ * @param longitud longitud actual del usuario.
+ * @param modifier modificador para el contenedor del mapa.
+ * @param zoom nivel de zoom inicial del mapa.
+ */
 @SuppressLint("RememberReturnType")
 @OptIn(MapboxExperimental::class)
 @Composable
@@ -532,6 +631,12 @@ private fun MapaUbicacion(
     }
 }
 
+/**
+ * componente composable privado que dibuja un indicador con animación de pulso sobre el mapa para representar la posición actual.
+ *
+ * @param color color del punto central y del indicador de pulso.
+ * @param modifier modificador para la composición.
+ */
 @Composable
 private fun PuntoUbicacionActual(color: Color, modifier: Modifier = Modifier) {
     val transition  = rememberInfiniteTransition(label = "pulso_gps")
@@ -569,6 +674,11 @@ private fun PuntoUbicacionActual(color: Color, modifier: Modifier = Modifier) {
 
 // ── BotonPanico ───────────────────────────────────────────────────────────────
 
+/**
+ * componente composable privado que renderiza el botón interactivo sos, requiriendo pulsación prolongada de 2 segundos para confirmación.
+ *
+ * @param onActivarPanico callback que se invoca tras completar con éxito la pulsación continuada.
+ */
 @Composable
 private fun BotonPanico(onActivarPanico: () -> Unit) {
     var presionando by remember { mutableStateOf(false) }

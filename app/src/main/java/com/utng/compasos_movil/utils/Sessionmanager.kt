@@ -5,16 +5,19 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * SessionManager
- * Almacena y recupera los datos de sesión del usuario (ID, email, etc)
- * Usa EncryptedSharedPreferences para seguridad
+ * gestor de sesiones encargado de almacenar, recuperar y eliminar la información de autenticación del usuario.
+ * utiliza [EncryptedSharedPreferences] para garantizar el cifrado de datos sensibles en el almacenamiento local.
+ *
+ * @param context contexto de la aplicación necesario para inicializar el cifrado y las preferencias compartidas.
  */
 class SessionManager(context: Context) {
 
+    /** clave maestra utilizada para el cifrado y descifrado de las preferencias. */
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
 
+    /** instancia de preferencias compartidas cifradas con esquemas aes256. */
     private val sharedPreferences = EncryptedSharedPreferences.create(
         context,
         "compasos_session",
@@ -23,15 +26,27 @@ class SessionManager(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    /** objeto de compañía que contiene las constantes de llaves para el almacenamiento de datos. */
     companion object {
+        /** llave para guardar y consultar el identificador único del usuario. */
         private const val KEY_USER_ID = "user_id"
+
+        /** llave para guardar y consultar el correo electrónico del usuario. */
         private const val KEY_USER_EMAIL = "user_email"
+
+        /** llave para guardar y consultar el nombre del usuario. */
         private const val KEY_USER_NOMBRE = "user_nombre"
+
+        /** llave para guardar y consultar el estado de la sesión del usuario. */
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
     }
 
     /**
-     * Guarda los datos de la sesión cuando el usuario inicia sesión
+     * guarda la información del usuario y marca la sesión como activa en las preferencias cifradas.
+     *
+     * @param usuarioId identificador único del usuario autenticado.
+     * @param email correo electrónico asociado a la cuenta del usuario.
+     * @param nombre nombre del usuario autenticado.
      */
     fun guardarSesion(
         usuarioId: String,
@@ -48,36 +63,43 @@ class SessionManager(context: Context) {
     }
 
     /**
-     * Obtiene el ID del usuario actualmente logueado
-     * @return ID del usuario o null si no hay sesión activa
+     * recupera el identificador único del usuario en sesión.
+     *
+     * @return cadena con el id del usuario o null si no existe una sesión activa.
      */
     fun obtenerUsuarioId(): String? {
         return sharedPreferences.getString(KEY_USER_ID, null)
     }
 
     /**
-     * Obtiene el email del usuario actualmente logueado
+     * recupera el correo electrónico del usuario en sesión.
+     *
+     * @return cadena con el correo del usuario o null si no se encuentra registrado.
      */
     fun obtenerUsuarioEmail(): String? {
         return sharedPreferences.getString(KEY_USER_EMAIL, null)
     }
 
     /**
-     * Obtiene el nombre del usuario actualmente logueado
+     * recupera el nombre del usuario en sesión.
+     *
+     * @return cadena con el nombre del usuario o null si no se encuentra registrado.
      */
     fun obtenerUsuarioNombre(): String? {
         return sharedPreferences.getString(KEY_USER_NOMBRE, null)
     }
 
     /**
-     * Verifica si hay una sesión activa
+     * verifica si existe una sesión de usuario actualmente activa.
+     *
+     * @return true si la sesión está activa, false de lo contrario.
      */
     fun estaSesionActiva(): Boolean {
         return sharedPreferences.getBoolean(KEY_IS_LOGGED_IN, false)
     }
 
     /**
-     * Cierra la sesión (elimina todos los datos guardados)
+     * remueve todas las llaves asociadas a la sesión del usuario en las preferencias.
      */
     fun cerrarSesion() {
         sharedPreferences.edit().apply {
@@ -90,7 +112,9 @@ class SessionManager(context: Context) {
     }
 
     /**
-     * Obtiene todos los datos de la sesión en un diccionario
+     * recopila los datos principales de la sesión en una estructura de mapa clave-valor.
+     *
+     * @return un mapa [Map] que contiene el identificador, correo y nombre del usuario.
      */
     fun obtenerDatosSesion(): Map<String, Any> {
         return mapOf(

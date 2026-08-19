@@ -30,6 +30,10 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
+ * repositorio principal encargado de gestionar las alertas de emergencia en la aplicación móvil.
+ * administra la persistencia local en la base de datos (room), el envío de mensajes mediante mqtt,
+ * el rastreo de ubicación en tiempo real y la sincronización con familiares y dispositivos tv.
+ *
  * ⚠️ EL CONSTRUCTOR NO CAMBIÓ — AlertaMqttService y DashboardViewModel
  * siguen construyéndolo exactamente igual.
  *
@@ -60,6 +64,14 @@ class AlertaPhoneRepository(
 
     // ── SOS (viene del reloj) — SIN CAMBIOS DE LÓGICA ────────────────────────
 
+    /**
+     * procesa un mensaje de alerta sos emitido desde el reloj conectado.
+     * parsea el payload json, verifica la sesión del usuario, registra la alerta y su ubicación
+     * actual en la base de datos local y realiza las notificaciones a familiares y pantallas tv.
+     *
+     * @param payloadJson cadena en formato json enviada por el reloj con los datos de la alerta.
+     * @return la entidad [AlertaEntity] creada y guardada, o null si ocurre un error o no hay sesión.
+     */
     suspend fun procesarSOS(payloadJson: String): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
             val json      = JSONObject(payloadJson)
@@ -110,6 +122,16 @@ class AlertaPhoneRepository(
 
     // ── Notificación a familiares (topic compasos/familia) ───────────────────
 
+    /**
+     * envía notificaciones sobre una alerta generada a todos los familiares vinculados al usuario.
+     * registra el evento en la tabla de notificaciones locales y publica un mensaje mqtt
+     * individual en el tópico correspondiente a cada familiar.
+     *
+     * @param alerta entidad de la alerta a notificar.
+     * @param usuarioId identificador del usuario emisor de la alerta.
+     * @param latitud latitud geográfica de la ubicación actual del emisor (opcional).
+     * @param longitud longitud geográfica de la ubicación actual del emisor (opcional).
+     */
     private suspend fun notificarFamiliares(
         alerta:    AlertaEntity,
         usuarioId: String,
@@ -168,6 +190,15 @@ class AlertaPhoneRepository(
 
     // ── Notificación a TVs vinculadas ─────────────────────────────────────────
 
+    /**
+     * transmite los datos de la alerta y la notificación de emergencia a las pantallas tv
+     * sincronizadas utilizando la interfaz [TvSyncService].
+     *
+     * @param alerta entidad de la alerta emitida.
+     * @param usuarioId identificador del usuario que emite la alerta.
+     * @param latitud latitud actual del emisor (opcional).
+     * @param longitud longitud actual del emisor (opcional).
+     */
     private suspend fun notificarTvs(
         alerta:    AlertaEntity,
         usuarioId: String,
@@ -203,6 +234,14 @@ class AlertaPhoneRepository(
 
     // ── Rastreo continuo de ubicación — SIN CAMBIOS DE LÓGICA ────────────────
 
+    /**
+     * inicia una corrutina para recolectar continuamente las coordenadas del gps del teléfono
+     * durante una alerta activa. inserta las lecturas en la base de datos y, periódicamente,
+     * sincroniza el historial local y emite las coordenadas a familiares y dispositivos tv.
+     *
+     * @param alertaId identificador único de la alerta asociada a este rastreo.
+     * @param scope alcance de la corrutina (`CoroutineScope`) donde se ejecutará la recolección del flujo.
+     */
     fun iniciarRastreoEnVivo(alertaId: String, scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             val usuarioId = sessionManager.obtenerUsuarioId()
@@ -232,6 +271,12 @@ class AlertaPhoneRepository(
         }
     }
 
+    /**
+     * publica las coordenadas de ubicación actual a los familiares registrados vía mqtt.
+     *
+     * @param alertaId identificador de la alerta a la que pertenece la actualización.
+     * @param ubicacion datos de coordenadas geográficas actuales obtenidas del sensor.
+     */
     private suspend fun publicarUbicacionAFamiliares(
         alertaId: String,
         ubicacion: UbicacionActual
@@ -265,6 +310,11 @@ class AlertaPhoneRepository(
         }
     }
 
+    /**
+     * retransmite la posición geográfica del usuario hacia los servicios de sincronización de tv.
+     *
+     * @param ubicacion estructura con la latitud y longitud actual del usuario.
+     */
     private suspend fun publicarUbicacionATvs(ubicacion: UbicacionActual) {
         try {
             val usuarioId = sessionManager.obtenerUsuarioId() ?: return
@@ -276,6 +326,12 @@ class AlertaPhoneRepository(
 
     // ── Audio del reloj — SIN CAMBIOS ────────────────────────────────────────
 
+    /**
+     * procesa e inserta en la base de datos local la información de un fragmento o clip
+     * de audio grabado y enviado por el reloj inteligente durante una emergencia.
+     *
+     * @param payloadJson estructura json con la dirección url/ruta y metadatos del audio.
+     */
     suspend fun procesarAudio(payloadJson: String) = withContext(Dispatchers.IO) {
         try {
             val json = JSONObject(payloadJson)
@@ -295,6 +351,14 @@ class AlertaPhoneRepository(
 
     // ── Alerta recibida como familiar ────────────────────────────────────────
 
+    /**
+     * procesa una alerta recibida desde otro usuario que pertenece al grupo familiar.
+     * almacena la alerta y notificación entrantes en la base de datos del receptor,
+     * actualiza la ubicación del emisor y redirige la alerta a las pantallas tv vinculadas.
+     *
+     * @param payloadJson datos en formato json transmitidos por el familiar emisor.
+     * @return la entidad [AlertaEntity] registrada en el almacenamiento local o null en caso de falla.
+     */
     suspend fun procesarAlertaFamiliar(payloadJson: String): AlertaEntity? =
         withContext(Dispatchers.IO) {
             try {
@@ -376,6 +440,12 @@ class AlertaPhoneRepository(
             }
         }
 
+    /**
+     * recibe y guarda una actualización periódica de posición en vivo de un familiar.
+     * persiste los datos en la base local y actualiza la ubicación en tiempo real disponible para la tv.
+     *
+     * @param payloadJson json con el `alertaId`, `latitud`, `longitud` y `usuarioId` del familiar.
+     */
     suspend fun procesarUbicacionFamiliar(payloadJson: String) = withContext(Dispatchers.IO) {
         try {
             val json     = JSONObject(payloadJson)
@@ -422,6 +492,13 @@ class AlertaPhoneRepository(
 
     // ── SOS desde el propio móvil — SIN CAMBIOS DE LÓGICA ────────────────────
 
+    /**
+     * genera y dispara una alerta sos directamente desde la interfaz del teléfono inteligente.
+     * obtiene la sesión actual, la última ubicación capturada, guarda la alerta localmente
+     * y notifica tanto a familiares como a dispositivos tv.
+     *
+     * @return la entidad [AlertaEntity] registrada o null si falla la identificación de sesión o proceso.
+     */
     suspend fun crearSOSDesdeMovil(): AlertaEntity? = withContext(Dispatchers.IO) {
         try {
             val usuarioId = sessionManager.obtenerUsuarioId() ?: run {
@@ -469,9 +546,14 @@ class AlertaPhoneRepository(
     // ── Helper ────────────────────────────────────────────────────────────────
 
     /**
-     * `historial_ubicacion` es la única tabla indexada por usuarioId, así que
-     * es la fuente de "última ubicación conocida de cada persona" que arma el
-     * snapshot para la TV.
+     * guarda un registro en la tabla `historial_ubicacion` indexada por `usuarioId`.
+     * esta función auxiliar asegura mantener un registro histórico de las últimas coordenadas
+     * conocidas de cada usuario para su consumo en la interfaz de la tv.
+     *
+     * @param usuarioId identificador del usuario correspondiente a las coordenadas.
+     * @param lat latitud geográfica registrada.
+     * @param lng longitud geográfica registrada.
+     * @param fecha marca de tiempo formateada de la captura de ubicación.
      */
     private suspend fun guardarEnHistorial(
         usuarioId: String, lat: Double, lng: Double, fecha: String = fmt.format(Date())

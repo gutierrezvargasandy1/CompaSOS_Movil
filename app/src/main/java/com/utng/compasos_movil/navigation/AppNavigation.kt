@@ -32,11 +32,25 @@ import com.utng.compasos_movil.utils.SessionManager
 
 // ── Factory AuthViewModel ─────────────────────────────────────────────────────
 
+/**
+ * fábrica de proveedores para instanciar [AuthViewModel] inyectando el servicio de autenticación y gestor de sesión.
+ *
+ * @property application contexto global de la aplicación android.
+ * @property authService servicio encargada del flujo de autenticación de usuarios.
+ * @property sessionManager administrador del estado de la sesión activa del usuario.
+ */
 class AuthViewModelFactory(
     private val application:    Application,
     private val authService:    AuthService,
     private val sessionManager: SessionManager
 ) : androidx.lifecycle.ViewModelProvider.Factory {
+    /**
+     * crea una nueva instancia de la clase viewmodel requerida si corresponde a [AuthViewModel].
+     *
+     * @param modelClass la clase del viewmodel a instanciar.
+     * @return una nueva instancia de [AuthViewModel].
+     * @throws IllegalArgumentException si la clase especificada no es reconocible por esta fábrica.
+     */
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(AuthViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
@@ -48,6 +62,23 @@ class AuthViewModelFactory(
 
 // ── AppNavigation ─────────────────────────────────────────────────────────────
 
+/**
+ * componente principal de navegación composable que configura el grafo de destinos ([NavHost]),
+ * gestiona permisos de ubicación en el dashboard y conecta pantallas con sus respectivas dependencias y daos.
+ *
+ * @param usuarioDao acceso a la entidad de usuarios.
+ * @param perfilMedicoDao acceso a la entidad de perfiles médicos.
+ * @param familiaDao acceso a la entidad de familias.
+ * @param familiaUsuarioDao acceso a las relaciones usuario-familia.
+ * @param contactoEmergenciaDao acceso a la entidad de contactos de emergencia.
+ * @param notificacionDao acceso a la entidad de notificaciones.
+ * @param dispositivoDao acceso a la entidad de dispositivos vinculados.
+ * @param alertaDao acceso a la entidad de alertas.
+ * @param historialUbicacionDao acceso al historial de ubicaciones geográficas.
+ * @param ubicacionDao acceso a las ubicaciones registradas en alertas.
+ * @param context contexto de la aplicación para inicializar servicios e inyecciones.
+ * @param initialRoute ruta opcional para dirigir la navegación al iniciar (e.g. desde notificaciones push).
+ */
 @Composable
 fun AppNavigation(
     usuarioDao:            UsuarioDao,
@@ -251,6 +282,11 @@ fun AppNavigation(
     }
 }
 
+/**
+ * componente composable auxiliar para renderizar pantallas temporales en desarrollo.
+ *
+ * @param titulo título que identifica la sección que se encuentra en construcción.
+ */
 @Composable
 private fun PantallaPlaceholder(titulo: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

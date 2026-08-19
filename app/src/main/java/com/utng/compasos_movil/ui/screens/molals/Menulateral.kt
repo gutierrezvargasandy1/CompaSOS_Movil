@@ -24,8 +24,11 @@ import com.utng.compasos_movil.ui.theme.CompaSOSColors
 import com.utng.compasos_movil.ui.theme.CompaSOSFieldShapeRadius
 
 /**
- * Una opción del menú lateral. `badge` es opcional, para mostrar un contador
- * (ej. notificaciones sin leer) sin necesidad de otro componente.
+ * representa una opción del menú lateral de navegación.
+ *
+ * @property titulo texto descriptivo o nombre de la opción.
+ * @property icono vector de imagen representativo de la opción.
+ * @property badge indicador numérico opcional para contadores o notificaciones.
  */
 data class MenuOpcion(
     val titulo: String,
@@ -34,8 +37,11 @@ data class MenuOpcion(
 )
 
 /**
- * Datos mínimos del usuario para la cabecera del menú.
- * fotoUri null -> se muestra un ícono de persona por defecto.
+ * representa la información del usuario desplegada en la cabecera del menú lateral.
+ *
+ * @property nombreCompleto nombre y apellidos del usuario.
+ * @property correo correo electrónico de la cuenta activa.
+ * @property fotoUri uri de la imagen de perfil del usuario (opcional).
  */
 data class MenuUsuario(
     val nombreCompleto: String,
@@ -43,6 +49,9 @@ data class MenuUsuario(
     val fotoUri: String? = null
 )
 
+/**
+ * lista de opciones principales que componen el círculo familiar y las secciones de actividad.
+ */
 private val opcionesPrincipales = listOf(
     MenuOpcion("Contactos de emergencia", Icons.Filled.ContactEmergency),
     MenuOpcion("Familia", Icons.Filled.FamilyRestroom),
@@ -50,41 +59,23 @@ private val opcionesPrincipales = listOf(
     MenuOpcion("Historial de ubicaciones", Icons.Filled.History),
     MenuOpcion("Notificaciones", Icons.Filled.Notifications),
     MenuOpcion("Alertas de familiares",   Icons.Filled.NotificationImportant)
-
 )
 
+/**
+ * lista de opciones secundarias destinadas a la configuración general.
+ */
 private val opcionesSecundarias = listOf(
     MenuOpcion("Configuración", Icons.Filled.Settings)
 )
 
 /**
- * Contenido del menú lateral (para usarse dentro de un ModalNavigationDrawer
- * o un PermanentNavigationDrawer). No incluye el propio Drawer para que puedas
- * envolverlo según el patrón de navegación que ya tengas.
+ * componente composable que renderiza la estructura completa y las secciones del menú lateral de navegación.
  *
- * Ejemplo de uso:
- *
- * val drawerState = rememberDrawerState(DrawerValue.Closed)
- * val scope = rememberCoroutineScope()
- *
- * ModalNavigationDrawer(
- *     drawerState = drawerState,
- *     drawerContent = {
- *         ModalDrawerSheet(drawerContainerColor = CompaSOSColors.Background) {
- *             MenuLateralContent(
- *                 usuario = MenuUsuario("Ana López", "ana@correo.com"),
- *                 opcionSeleccionada = "Notificaciones",
- *                 onOpcionSeleccionada = { opcion ->
- *                     scope.launch { drawerState.close() }
- *                     // navController.navigate(...)
- *                 },
- *                 onCerrarSesion = { /* logout */ }
- *             )
- *         }
- *     }
- * ) {
- *     // contenido principal de la pantalla
- * }
+ * @param usuario datos del usuario a mostrar en la cabecera.
+ * @param opcionSeleccionada título de la opción actualmente seleccionada en la aplicación.
+ * @param onOpcionSeleccionada evento emitido al presionar una opción del menú.
+ * @param onCerrarSesion evento emitido al pulsar la opción de cierre de sesión.
+ * @param onEditarPerfil evento emitido al hacer clic en la cabecera del usuario para editar el perfil.
  */
 @Composable
 fun MenuLateralContent(
@@ -157,6 +148,13 @@ fun MenuLateralContent(
     }
 }
 
+/**
+ * componente composable interno que renderiza la información del perfil del usuario en la parte superior del menú.
+ *
+ * @param usuario información del usuario a presentar.
+ * @param onClick acción a realizar cuando se presiona la cabecera.
+ * @param modifier modificador para personalizar la maquetación.
+ */
 @Composable
 private fun MenuCabeceraUsuario(
     usuario: MenuUsuario,
@@ -208,6 +206,11 @@ private fun MenuCabeceraUsuario(
     }
 }
 
+/**
+ * componente composable interno que dibuja el título o encabezado de un grupo de opciones en el menú.
+ *
+ * @param texto cadena de texto para el título de la sección.
+ */
 @Composable
 private fun MenuSeccionTitulo(texto: String) {
     Text(
@@ -220,6 +223,9 @@ private fun MenuSeccionTitulo(texto: String) {
     )
 }
 
+/**
+ * componente composable interno que dibuja una línea divisoria horizontal.
+ */
 @Composable
 private fun MenuDivider() {
     HorizontalDivider(
@@ -229,6 +235,15 @@ private fun MenuDivider() {
     )
 }
 
+/**
+ * componente composable interno para renderizar cada una de las opciones clicables del menú lateral.
+ *
+ * @param opcion datos de la opción a dibujar.
+ * @param seleccionada indica si el ítem actual se encuentra activo.
+ * @param onClick evento al seleccionar la opción.
+ * @param colorTexto color con el que se pintará el texto de la opción.
+ * @param colorIcono color aplicado al ícono del elemento.
+ */
 @Composable
 private fun MenuOpcionItem(
     opcion: MenuOpcion,

@@ -40,10 +40,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/**
+ * color característico utilizado para representar alertas críticas y estados de emergencia.
+ */
 private val RojoAlerta = Color(0xFFE53935)
 
 // ── ViewModel ────────────────────────────────────────────────────────────────
 
+/**
+ * representa el estado de la interfaz de usuario de la pantalla de detalle de alerta.
+ *
+ * @property alerta entidad de la alerta consultada o nulo si no se ha encontrado.
+ * @property ubicacion entidad con la última ubicación geográfica registrada para la alerta.
+ * @property emisorNombre nombre y apellido del usuario que generó la alerta.
+ * @property cargando indica si la pantalla está obteniendo la información desde la base de datos.
+ */
 data class AlertaDetalleState(
     val alerta:       AlertaEntity?    = null,
     val ubicacion:    UbicacionEntity? = null,
@@ -51,6 +62,15 @@ data class AlertaDetalleState(
     val cargando:     Boolean          = true
 )
 
+/**
+ * viewmodel encargado de consultar y gestionar la información detallada de una alerta de emergencia específica.
+ *
+ * @param application instancia global de la aplicación.
+ * @property alertaId identificador único de la alerta a consultar.
+ * @property alertaDao acceso a datos de alertas en la base de datos local.
+ * @property ubicacionDao acceso a datos de ubicaciones asociadas.
+ * @property usuarioDao acceso a datos de los usuarios emisores.
+ */
 class AlertaDetalleViewModel(
     application: Application,
     private val alertaId:    String,
@@ -59,11 +79,21 @@ class AlertaDetalleViewModel(
     private val usuarioDao:  UsuarioDao        // ← nuevo
 ) : AndroidViewModel(application) {
 
+    /**
+     * flujo mutable interno del estado de la pantalla.
+     */
     private val _state = MutableStateFlow(AlertaDetalleState())
+
+    /**
+     * flujo observable público del estado de la pantalla.
+     */
     val state: StateFlow<AlertaDetalleState> = _state.asStateFlow()
 
     init { cargar() }
 
+    /**
+     * realiza la carga asíncrona de la alerta, su ubicación asociada y el nombre del usuario emisor.
+     */
     private fun cargar() {
         viewModelScope.launch {
             val alerta    = alertaDao.obtenerPorId(alertaId)
@@ -84,6 +114,15 @@ class AlertaDetalleViewModel(
         }
     }
 
+    /**
+     * fábrica para crear instancias de [AlertaDetalleViewModel] con sus dependencias requeridas.
+     *
+     * @property app contexto de la aplicación android.
+     * @property alertaId identificador de la alerta a cargar.
+     * @property alertaDao dao de alertas.
+     * @property ubicacionDao dao de ubicaciones.
+     * @property usuarioDao dao de usuarios.
+     */
     class Factory(
         private val app:          Application,
         private val alertaId:     String,
@@ -91,6 +130,12 @@ class AlertaDetalleViewModel(
         private val ubicacionDao: UbicacionDao,
         private val usuarioDao:   UsuarioDao    // ← nuevo
     ) : ViewModelProvider.Factory {
+        /**
+         * crea una nueva instancia de [AlertaDetalleViewModel].
+         *
+         * @param modelClass la clase del viewmodel solicitado.
+         * @return instancia construida con las dependencias inyectadas.
+         */
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             AlertaDetalleViewModel(app, alertaId, alertaDao, ubicacionDao, usuarioDao) as T
@@ -99,6 +144,16 @@ class AlertaDetalleViewModel(
 
 // ── Screen ───────────────────────────────────────────────────────────────────
 
+/**
+ * componente composable principal que renderiza el detalle de una alerta de emergencia,
+ * mostrando un mapa interactivo de mapbox, coordenadas y datos del emisor.
+ *
+ * @param alertaId identificador de la alerta a visualizar.
+ * @param navController controlador de navegación para retornar a la pantalla anterior.
+ * @param alertaDao dao para consultar alertas.
+ * @param ubicacionDao dao para consultar la ubicación geográfica.
+ * @param usuarioDao dao para obtener la información del emisor.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertaDetalleScreen(
